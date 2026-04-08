@@ -9,10 +9,14 @@
   let activeChannelId = null;
   let isPlaying = false;
   let currentSquelch = 0;
+  let openwebrxEnabled = false; // Detected at init time
 
   const audio = window.audioEngine;
   const viz = new Visualizer();
   const spectrumChart = new SpectrumChart('spectrum-canvas');
+
+  // Modulation mapping: our names -> OpenWebRX+ names
+  const MOD_TO_OWRX = { fm: 'nfm', wbfm: 'wfm', am: 'am', usb: 'usb', lsb: 'lsb', raw: 'am' };
 
   // --- Tag color map ---
   const TAG_COLORS = {
@@ -113,29 +117,74 @@
       [...tags].sort().map(t => `<option value="${t}">${t}</option>`).join('');
   }
 
+  // --- OpenWebRX+ integration ---
+
+  /** Tune OpenWebRX+ via the iframe (same-origin through nginx proxy) */
+  function tuneOpenWebRX(freqHz, modulation) {
+    const frame = $('#sdr-frame');
+    if (!frame) return;
+
+    const owrxMod = MOD_TO_OWRX[modulation] || 'nfm';
+
+    try {
+      const win = frame.contentWindow;
+      // Attempt 1: Use OpenWebRX+'s hash-based tuning
+      // OpenWebRX+ reads freq/mod from URL hash on load and on hashchange
+      win.location.hash = 'freq=' + freqHz + ',mod=' + owrxMod;
+
+      // Attempt 2: Try to call internal APIs if available (same-origin)
+      // OpenWebRX+ exposes these through its JS modules
+      if (win.$demodulator && win.$demodulator.set_offset_frequency) {
+        // Direct demodulator control
+        win.$demodulator.set_offset_frequency(freqHz - (win.center_freq || freqHz));
+      }
+    } catch (e) {
+      // Cross-origin or frame not loaded yet - reload with hash
+      frame.src = '/sdr/#freq=' + freqHz + ',mod=' + owrxMod;
+    }
+  }
+
+  /** Check if OpenWebRX+ is available (behind nginx proxy at /sdr/) */
+  async function detectOpenWebRX() {
+    try {
+      const res = await fetch('/sdr/', { method: 'HEAD', signal: AbortSignal.timeout(3000) });
+      return res.ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // --- Tune Channel ---
   async function tuneChannel(channelId) {
     const ch = presets.channels.find(c => c.id === channelId);
     if (!ch) return;
 
     activeChannelId = channelId;
-
-    audio.init();
-    if (!audio.playing) {
-      audio.play();
-    }
-    isPlaying = true;
-    updatePlayButton();
-    viz.start();
-
-    audio.send({
-      cmd: 'tune',
-      freq: ch.freq,
-      modulation: ch.modulation,
-    });
-
     updateFreqDisplay(ch.freq, ch.name);
     updateStatus('active', 'Tuning...');
+
+    if (openwebrxEnabled) {
+      // Tune via OpenWebRX+ iframe
+      tuneOpenWebRX(ch.freq, ch.modulation);
+      isPlaying = true;
+      updatePlayButton();
+    } else {
+      // Standalone mode: use our own audio engine
+      audio.init();
+      if (!audio.playing) {
+        audio.play();
+      }
+      isPlaying = true;
+      updatePlayButton();
+      viz.start();
+
+      audio.send({
+        cmd: 'tune',
+        freq: ch.freq,
+        modulation: ch.modulation,
+      });
+    }
+
     renderChannels($('#channel-search').value, $('#channel-filter-tag').value);
   }
 
@@ -160,22 +209,28 @@
     audio.setSquelch(squelch);
     viz.setSquelch(squelch);
 
-    audio.init();
-    if (!audio.playing) {
-      audio.play();
-    }
-    isPlaying = true;
-    updatePlayButton();
-    viz.start();
+    if (openwebrxEnabled) {
+      tuneOpenWebRX(freqHz, mod);
+      isPlaying = true;
+      updatePlayButton();
+    } else {
+      audio.init();
+      if (!audio.playing) {
+        audio.play();
+      }
+      isPlaying = true;
+      updatePlayButton();
+      viz.start();
 
-    audio.send({
-      cmd: 'tune',
-      freq: freqHz,
-      modulation: mod,
-      gain: gain,
-      bandwidth: bw,
-      ppm: ppm,
-    });
+      audio.send({
+        cmd: 'tune',
+        freq: freqHz,
+        modulation: mod,
+        gain: gain,
+        bandwidth: bw,
+        ppm: ppm,
+      });
+    }
 
     updateFreqDisplay(freqHz, 'Manual: ' + mod.toUpperCase());
     updateStatus('active', 'Tuning...');
@@ -692,17 +747,34 @@
     await loadPresets();
     connectStatusWs();
 
-    // Check tool availability
-    const status = await api('GET', 'status');
-    if (status.tools) {
-      const missing = Object.entries(status.tools)
-        .filter(([, ok]) => !ok)
-        .map(([name]) => name);
-      if (missing.length > 0) {
-        updateSDRStatus({
-          state: 'error',
-          error: 'Missing tools: ' + missing.join(', '),
-        });
+    // Detect OpenWebRX+ mode (available via nginx reverse proxy at /sdr/)
+    openwebrxEnabled = await detectOpenWebRX();
+    if (openwebrxEnabled) {
+      console.log('[App] OpenWebRX+ detected at /sdr/ - integrated mode enabled');
+      $('#tab-sdr').style.display = '';
+      $('#sdr-state-badge').textContent = 'OPENWEBRX+';
+      $('#sdr-state-badge').className = 'sdr-state-badge receiving';
+      $('#sdr-detail').textContent = 'Using OpenWebRX+ SDR backend - click a channel to tune';
+      $('#sdr-detail').className = 'sdr-detail';
+
+      // Full screen button opens OpenWebRX+ in new tab
+      const fullBtn = $('#btn-sdr-fullscreen');
+      if (fullBtn) {
+        fullBtn.addEventListener('click', () => window.open('/sdr/', '_blank'));
+      }
+    } else {
+      // Standalone mode: check tool availability
+      const status = await api('GET', 'status');
+      if (status.tools) {
+        const missing = Object.entries(status.tools)
+          .filter(([, ok]) => !ok)
+          .map(([name]) => name);
+        if (missing.length > 0) {
+          updateSDRStatus({
+            state: 'error',
+            error: 'Missing tools: ' + missing.join(', '),
+          });
+        }
       }
     }
   }
