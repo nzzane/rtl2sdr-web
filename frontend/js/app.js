@@ -672,8 +672,9 @@
       }
     });
 
-    // Play/Pause
+    // Play/Pause (only for standalone mode)
     $('#btn-play-pause').addEventListener('click', () => {
+      if (openwebrxEnabled) return; // Audio handled by OpenWebRX+
       if (isPlaying) {
         stopAll();
       } else {
@@ -690,8 +691,9 @@
       audio.setVolume(parseInt(e.target.value) / 100);
     });
 
-    // Keyboard shortcut - Space to toggle play
+    // Keyboard shortcut - Space to toggle play (standalone mode only)
     document.addEventListener('keydown', (e) => {
+      if (openwebrxEnabled) return;
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (e.code === 'Space') {
         e.preventDefault();

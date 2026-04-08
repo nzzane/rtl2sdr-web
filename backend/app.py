@@ -154,6 +154,10 @@ async def delete_group(group_id: int):
 @app.post("/api/tune")
 async def tune(params: dict):
     """Tune to a specific frequency."""
+    if OPENWEBRX_ENABLED:
+        return JSONResponse(status_code=409, content={
+            "error": "RTL-SDR device is managed by OpenWebRX+. Use the Live SDR tab to tune."
+        })
     await scanner.stop()
 
     freq = params.get("freq")
@@ -245,19 +249,25 @@ async def audio_websocket(ws: WebSocket):
                 cmd = data.get("cmd")
 
                 if cmd == "tune":
-                    await scanner.stop()
-                    await sdr_stream.start(
-                        freq_hz=int(data["freq"]),
-                        modulation=data.get("modulation", "fm"),
-                        gain=data.get("gain", "auto"),
-                        bandwidth=data.get("bandwidth"),
-                        ppm=int(data.get("ppm", 0)),
-                    )
-                    await ws.send_json({
-                        "event": "tuned",
-                        "freq": data["freq"],
-                        "sdr": sdr_stream.get_status(),
-                    })
+                    if OPENWEBRX_ENABLED:
+                        await ws.send_json({
+                            "event": "error",
+                            "message": "Use OpenWebRX+ for tuning (Live SDR tab). RTL-SDR device is managed by OpenWebRX+.",
+                        })
+                    else:
+                        await scanner.stop()
+                        await sdr_stream.start(
+                            freq_hz=int(data["freq"]),
+                            modulation=data.get("modulation", "fm"),
+                            gain=data.get("gain", "auto"),
+                            bandwidth=data.get("bandwidth"),
+                            ppm=int(data.get("ppm", 0)),
+                        )
+                        await ws.send_json({
+                            "event": "tuned",
+                            "freq": data["freq"],
+                            "sdr": sdr_stream.get_status(),
+                        })
 
                 elif cmd == "stop":
                     await scanner.stop()
