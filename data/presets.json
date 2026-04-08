@@ -1,0 +1,349 @@
+{
+  "channels": [
+    {
+      "id": 1,
+      "name": "Wellington Airport Tower",
+      "freq": 118300000,
+      "modulation": "am",
+      "description": "NZWN Tower",
+      "tags": ["aviation", "wellington"]
+    },
+    {
+      "id": 2,
+      "name": "Wellington Airport Ground",
+      "freq": 121900000,
+      "modulation": "am",
+      "description": "NZWN Ground",
+      "tags": ["aviation", "wellington"]
+    },
+    {
+      "id": 3,
+      "name": "Wellington Airport ATIS",
+      "freq": 126900000,
+      "modulation": "am",
+      "description": "NZWN ATIS - Automated weather/info",
+      "tags": ["aviation", "wellington"]
+    },
+    {
+      "id": 4,
+      "name": "Wellington Approach",
+      "freq": 119300000,
+      "modulation": "am",
+      "description": "NZWN Approach/Departure",
+      "tags": ["aviation", "wellington"]
+    },
+    {
+      "id": 5,
+      "name": "Marine Ch 16 - Distress",
+      "freq": 156800000,
+      "modulation": "fm",
+      "description": "International distress & calling",
+      "tags": ["marine", "emergency"]
+    },
+    {
+      "id": 6,
+      "name": "Marine Ch 12 - Port Ops",
+      "freq": 156600000,
+      "modulation": "fm",
+      "description": "Wellington Harbour port operations",
+      "tags": ["marine", "wellington"]
+    },
+    {
+      "id": 7,
+      "name": "Marine Ch 14 - Port",
+      "freq": 156700000,
+      "modulation": "fm",
+      "description": "Wellington port working channel",
+      "tags": ["marine", "wellington"]
+    },
+    {
+      "id": 8,
+      "name": "Marine Ch 6 - Ship-Ship",
+      "freq": 156300000,
+      "modulation": "fm",
+      "description": "Inter-ship safety",
+      "tags": ["marine"]
+    },
+    {
+      "id": 9,
+      "name": "Wellington POCSAG Pagers",
+      "freq": 157925000,
+      "modulation": "fm",
+      "description": "Pager traffic (data)",
+      "tags": ["utility", "wellington"]
+    },
+    {
+      "id": 10,
+      "name": "NZ Amateur 2m Calling",
+      "freq": 146525000,
+      "modulation": "fm",
+      "description": "2m FM simplex calling frequency",
+      "tags": ["amateur", "2m"]
+    },
+    {
+      "id": 11,
+      "name": "Wellington 2m Repeater - Kaukau",
+      "freq": 145625000,
+      "modulation": "fm",
+      "description": "ZL2VH Mt Kaukau repeater output",
+      "tags": ["amateur", "2m", "wellington", "repeater"]
+    },
+    {
+      "id": 12,
+      "name": "Wellington 2m Repeater - Belmont",
+      "freq": 145675000,
+      "modulation": "fm",
+      "description": "ZL2BN Belmont repeater output",
+      "tags": ["amateur", "2m", "wellington", "repeater"]
+    },
+    {
+      "id": 13,
+      "name": "NZ Amateur 70cm Calling",
+      "freq": 433000000,
+      "modulation": "fm",
+      "description": "70cm FM simplex calling frequency",
+      "tags": ["amateur", "70cm"]
+    },
+    {
+      "id": 14,
+      "name": "Wellington 70cm Repeater",
+      "freq": 438800000,
+      "modulation": "fm",
+      "description": "ZL2VH 70cm repeater output",
+      "tags": ["amateur", "70cm", "wellington", "repeater"]
+    },
+    {
+      "id": 15,
+      "name": "CB Channel 1",
+      "freq": 26965000,
+      "modulation": "am",
+      "description": "CB Radio Channel 1",
+      "tags": ["cb"]
+    },
+    {
+      "id": 16,
+      "name": "CB Channel 5 - Emergency",
+      "freq": 27015000,
+      "modulation": "am",
+      "description": "CB emergency channel (NZ/AU)",
+      "tags": ["cb", "emergency"]
+    },
+    {
+      "id": 17,
+      "name": "CB Channel 8 - Road",
+      "freq": 27055000,
+      "modulation": "am",
+      "description": "Commonly used road channel NZ",
+      "tags": ["cb"]
+    },
+    {
+      "id": 18,
+      "name": "CB Channel 11",
+      "freq": 27085000,
+      "modulation": "am",
+      "description": "CB Radio Channel 11 - calling",
+      "tags": ["cb"]
+    },
+    {
+      "id": 19,
+      "name": "CB Channel 14",
+      "freq": 27125000,
+      "modulation": "am",
+      "description": "CB Radio Channel 14",
+      "tags": ["cb"]
+    },
+    {
+      "id": 20,
+      "name": "CB Channel 19 - Truckers",
+      "freq": 27185000,
+      "modulation": "am",
+      "description": "Trucker channel",
+      "tags": ["cb"]
+    },
+    {
+      "id": 21,
+      "name": "CB Channel 35 - AU/NZ Emergency",
+      "freq": 27355000,
+      "modulation": "am",
+      "description": "AU/NZ emergency CB channel",
+      "tags": ["cb", "emergency"]
+    },
+    {
+      "id": 22,
+      "name": "CB Channel 40",
+      "freq": 27405000,
+      "modulation": "am",
+      "description": "CB Radio Channel 40",
+      "tags": ["cb"]
+    },
+    {
+      "id": 23,
+      "name": "UHF CB Ch 5 - Emergency",
+      "freq": 476525000,
+      "modulation": "fm",
+      "description": "UHF CB emergency channel",
+      "tags": ["uhf-cb", "emergency"]
+    },
+    {
+      "id": 24,
+      "name": "UHF CB Ch 11 - Calling",
+      "freq": 476825000,
+      "modulation": "fm",
+      "description": "UHF CB calling channel",
+      "tags": ["uhf-cb"]
+    },
+    {
+      "id": 25,
+      "name": "UHF CB Ch 22 - Telemetry/Data",
+      "freq": 477375000,
+      "modulation": "fm",
+      "description": "UHF CB Channel 22",
+      "tags": ["uhf-cb"]
+    },
+    {
+      "id": 26,
+      "name": "UHF CB Ch 40 - Road",
+      "freq": 477275000,
+      "modulation": "fm",
+      "description": "UHF CB truckers/road channel",
+      "tags": ["uhf-cb"]
+    },
+    {
+      "id": 27,
+      "name": "NOAA Weather (if receivable)",
+      "freq": 162550000,
+      "modulation": "fm",
+      "description": "Weather radio broadcast",
+      "tags": ["weather", "utility"]
+    },
+    {
+      "id": 28,
+      "name": "FM Broadcast - RNZ National",
+      "freq": 101300000,
+      "modulation": "wbfm",
+      "description": "RNZ National Wellington 101.3 FM",
+      "tags": ["broadcast", "wellington"]
+    },
+    {
+      "id": 29,
+      "name": "FM Broadcast - RNZ Concert",
+      "freq": 89700000,
+      "modulation": "wbfm",
+      "description": "RNZ Concert Wellington 89.7 FM",
+      "tags": ["broadcast", "wellington"]
+    },
+    {
+      "id": 30,
+      "name": "FM Broadcast - The Edge",
+      "freq": 96600000,
+      "modulation": "wbfm",
+      "description": "The Edge Wellington 96.6 FM",
+      "tags": ["broadcast", "wellington"]
+    },
+    {
+      "id": 31,
+      "name": "Wellington APRS",
+      "freq": 144575000,
+      "modulation": "fm",
+      "description": "APRS packet radio (data)",
+      "tags": ["amateur", "2m", "wellington", "data"]
+    },
+    {
+      "id": 32,
+      "name": "NZ Amateur 2m SSB Calling",
+      "freq": 144200000,
+      "modulation": "usb",
+      "description": "2m SSB calling frequency",
+      "tags": ["amateur", "2m"]
+    },
+    {
+      "id": 33,
+      "name": "ISS Downlink Voice",
+      "freq": 145800000,
+      "modulation": "fm",
+      "description": "International Space Station voice downlink",
+      "tags": ["amateur", "space"]
+    },
+    {
+      "id": 34,
+      "name": "ADS-B Aircraft",
+      "freq": 1090000000,
+      "modulation": "raw",
+      "description": "ADS-B aircraft transponder (data only)",
+      "tags": ["aviation", "data"]
+    },
+    {
+      "id": 35,
+      "name": "Wellington Metservice Synop",
+      "freq": 518000000,
+      "modulation": "fm",
+      "description": "Navtex / weather data",
+      "tags": ["weather", "wellington", "data"]
+    }
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "name": "Wellington Aviation",
+      "description": "Wellington Airport frequencies",
+      "modulation": "am",
+      "channel_ids": [1, 2, 3, 4]
+    },
+    {
+      "id": 2,
+      "name": "Marine VHF",
+      "description": "Marine radio channels",
+      "modulation": "fm",
+      "channel_ids": [5, 6, 7, 8]
+    },
+    {
+      "id": 3,
+      "name": "Amateur 2m",
+      "description": "2m amateur radio frequencies",
+      "modulation": "fm",
+      "channel_ids": [10, 11, 12, 31, 32]
+    },
+    {
+      "id": 4,
+      "name": "Amateur 70cm",
+      "description": "70cm amateur radio frequencies",
+      "modulation": "fm",
+      "channel_ids": [13, 14]
+    },
+    {
+      "id": 5,
+      "name": "CB Radio (27 MHz)",
+      "description": "CB radio channels - AM",
+      "modulation": "am",
+      "channel_ids": [15, 16, 17, 18, 19, 20, 21, 22]
+    },
+    {
+      "id": 6,
+      "name": "UHF CB (477 MHz)",
+      "description": "UHF CB channels - FM",
+      "modulation": "fm",
+      "channel_ids": [23, 24, 25, 26]
+    },
+    {
+      "id": 7,
+      "name": "Emergency Channels",
+      "description": "All emergency/distress frequencies",
+      "modulation": "fm",
+      "channel_ids": [5, 16, 21, 23]
+    },
+    {
+      "id": 8,
+      "name": "Wellington FM Radio",
+      "description": "FM broadcast stations in Wellington",
+      "modulation": "wbfm",
+      "channel_ids": [28, 29, 30]
+    },
+    {
+      "id": 9,
+      "name": "Wellington All",
+      "description": "All Wellington-specific frequencies",
+      "modulation": "fm",
+      "channel_ids": [1, 2, 3, 4, 6, 7, 9, 11, 12, 14, 28, 29, 30, 31, 35]
+    }
+  ]
+}

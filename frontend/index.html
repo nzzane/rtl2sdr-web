@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SDR Web">
+  <title>RTL-SDR Web UI</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1 class="logo">RTL-SDR <span>Web</span></h1>
+      </div>
+      <div class="header-center" id="freq-display">
+        <span class="freq-value" id="current-freq">---.--- MHz</span>
+        <span class="freq-label" id="current-label">Not tuned</span>
+      </div>
+      <div class="header-right">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-text" id="status-text">Idle</span>
+      </div>
+    </header>
+
+    <!-- Tab Navigation -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="channels">Channels</button>
+      <button class="tab" data-tab="scan">Scan</button>
+      <button class="tab" data-tab="manual">Manual</button>
+      <button class="tab" data-tab="spectrum">Spectrum</button>
+      <button class="tab" data-tab="manage">Manage</button>
+    </nav>
+
+    <!-- Tab Panels -->
+    <main class="content">
+
+      <!-- Channels Tab -->
+      <section class="tab-panel active" id="panel-channels">
+        <div class="filter-bar">
+          <input type="text" id="channel-search" placeholder="Search channels..." class="input">
+          <select id="channel-filter-tag" class="input">
+            <option value="">All tags</option>
+          </select>
+        </div>
+        <div class="channel-list" id="channel-list"></div>
+      </section>
+
+      <!-- Scan Tab -->
+      <section class="tab-panel" id="panel-scan">
+        <div class="scan-controls">
+          <div class="form-group">
+            <label>Scan Group</label>
+            <select id="scan-group-select" class="input"></select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Squelch</label>
+              <input type="range" id="scan-squelch" min="0" max="100" value="10" class="range">
+              <span id="scan-squelch-val">10</span>
+            </div>
+            <div class="form-group">
+              <label>Dwell (s)</label>
+              <input type="number" id="scan-dwell" value="2" min="0.5" max="30" step="0.5" class="input input-sm">
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="btn-scan-start" class="btn btn-primary">Start Scan</button>
+            <button id="btn-scan-stop" class="btn btn-danger" disabled>Stop Scan</button>
+          </div>
+        </div>
+        <div class="scan-status" id="scan-status">
+          <div class="scan-freq-display" id="scan-current-freq">---.--- MHz</div>
+          <div class="scan-progress" id="scan-progress">Not scanning</div>
+          <div class="scan-channels" id="scan-channel-list"></div>
+        </div>
+      </section>
+
+      <!-- Manual Tab -->
+      <section class="tab-panel" id="panel-manual">
+        <div class="manual-controls">
+          <div class="form-group">
+            <label>Frequency (MHz)</label>
+            <input type="number" id="manual-freq" placeholder="146.525" step="0.001" class="input input-lg">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Modulation</label>
+              <select id="manual-mod" class="input">
+                <option value="fm">NFM</option>
+                <option value="wbfm">WBFM</option>
+                <option value="am">AM</option>
+                <option value="usb">USB</option>
+                <option value="lsb">LSB</option>
+                <option value="raw">RAW</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Squelch</label>
+              <input type="range" id="manual-squelch" min="0" max="100" value="0" class="range">
+              <span id="manual-squelch-val">0</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Gain (dB)</label>
+              <select id="manual-gain" class="input">
+                <option value="auto">Auto</option>
+                <option value="0">0</option>
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="30">30</option>
+                <option value="40">40</option>
+                <option value="50">50</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Bandwidth (kHz)</label>
+              <input type="number" id="manual-bw" placeholder="Auto" step="1" class="input input-sm">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>PPM Correction</label>
+              <input type="number" id="manual-ppm" value="0" step="1" class="input input-sm">
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="btn-manual-tune" class="btn btn-primary">Tune</button>
+            <button id="btn-manual-stop" class="btn btn-danger">Stop</button>
+            <button id="btn-manual-save" class="btn btn-secondary">Save as Preset</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Spectrum Tab -->
+      <section class="tab-panel" id="panel-spectrum">
+        <div class="spectrum-controls">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Start (MHz)</label>
+              <input type="number" id="spectrum-start" value="88" step="0.1" class="input input-sm">
+            </div>
+            <div class="form-group">
+              <label>End (MHz)</label>
+              <input type="number" id="spectrum-end" value="108" step="0.1" class="input input-sm">
+            </div>
+            <div class="form-group">
+              <label>Bin (kHz)</label>
+              <input type="number" id="spectrum-bin" value="25" step="1" class="input input-sm">
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="btn-spectrum-sweep" class="btn btn-primary">Sweep</button>
+          </div>
+        </div>
+        <div class="spectrum-display">
+          <canvas id="spectrum-canvas" width="800" height="300"></canvas>
+        </div>
+      </section>
+
+      <!-- Manage Tab -->
+      <section class="tab-panel" id="panel-manage">
+        <div class="manage-section">
+          <h3>Add Channel</h3>
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="add-ch-name" class="input" placeholder="Channel name">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Frequency (MHz)</label>
+              <input type="number" id="add-ch-freq" class="input" placeholder="146.525" step="0.001">
+            </div>
+            <div class="form-group">
+              <label>Modulation</label>
+              <select id="add-ch-mod" class="input">
+                <option value="fm">NFM</option>
+                <option value="wbfm">WBFM</option>
+                <option value="am">AM</option>
+                <option value="usb">USB</option>
+                <option value="lsb">LSB</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" id="add-ch-desc" class="input" placeholder="Optional description">
+          </div>
+          <div class="form-group">
+            <label>Tags (comma-separated)</label>
+            <input type="text" id="add-ch-tags" class="input" placeholder="amateur, wellington, 2m">
+          </div>
+          <button id="btn-add-channel" class="btn btn-primary">Add Channel</button>
+        </div>
+
+        <div class="manage-section">
+          <h3>Add Scan Group</h3>
+          <div class="form-group">
+            <label>Group Name</label>
+            <input type="text" id="add-grp-name" class="input" placeholder="Group name">
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" id="add-grp-desc" class="input" placeholder="Optional description">
+          </div>
+          <div class="form-group">
+            <label>Default Modulation</label>
+            <select id="add-grp-mod" class="input">
+              <option value="fm">NFM</option>
+              <option value="wbfm">WBFM</option>
+              <option value="am">AM</option>
+              <option value="usb">USB</option>
+              <option value="lsb">LSB</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Select Channels</label>
+            <div id="add-grp-channels" class="checkbox-grid"></div>
+          </div>
+          <button id="btn-add-group" class="btn btn-primary">Add Group</button>
+        </div>
+
+        <div class="manage-section">
+          <h3>Existing Channels</h3>
+          <div id="manage-channel-list" class="manage-list"></div>
+        </div>
+
+        <div class="manage-section">
+          <h3>Existing Groups</h3>
+          <div id="manage-group-list" class="manage-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Audio Visualizer (always visible at bottom) -->
+    <footer class="visualizer-bar">
+      <div class="viz-controls">
+        <button id="btn-play-pause" class="btn-icon" title="Play/Pause">
+          <svg id="icon-play" viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+          <svg id="icon-pause" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" style="display:none"><rect x="4" y="3" width="6" height="18"/><rect x="14" y="3" width="6" height="18"/></svg>
+        </button>
+        <div class="volume-control">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3z"/></svg>
+          <input type="range" id="volume" min="0" max="100" value="80" class="range range-sm">
+        </div>
+      </div>
+      <canvas id="waveform-canvas" width="600" height="60"></canvas>
+      <canvas id="fft-canvas" width="300" height="60"></canvas>
+    </footer>
+  </div>
+
+  <!-- Edit Channel Modal -->
+  <div class="modal-overlay" id="modal-edit-channel" style="display:none">
+    <div class="modal">
+      <h3>Edit Channel</h3>
+      <input type="hidden" id="edit-ch-id">
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" id="edit-ch-name" class="input">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Frequency (MHz)</label>
+          <input type="number" id="edit-ch-freq" class="input" step="0.001">
+        </div>
+        <div class="form-group">
+          <label>Modulation</label>
+          <select id="edit-ch-mod" class="input">
+            <option value="fm">NFM</option>
+            <option value="wbfm">WBFM</option>
+            <option value="am">AM</option>
+            <option value="usb">USB</option>
+            <option value="lsb">LSB</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" id="edit-ch-desc" class="input">
+      </div>
+      <div class="form-group">
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="edit-ch-tags" class="input">
+      </div>
+      <div class="btn-row">
+        <button id="btn-edit-ch-save" class="btn btn-primary">Save</button>
+        <button id="btn-edit-ch-cancel" class="btn btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/audio.js"></script>
+  <script src="/static/js/visualizer.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

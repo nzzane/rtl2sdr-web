@@ -1,0 +1,268 @@
+"""RTL-SDR interface using rtl_fm and rtl_power command-line tools."""
+
+import asyncio
+import logging
+import signal
+import shutil
+
+logger = logging.getLogger(__name__)
+
+SAMPLE_RATE = 48000  # Audio sample rate for output
+RTL_FM_BIN = "rtl_fm"
+RTL_POWER_BIN = "rtl_power"
+
+
+def check_tools():
+    """Check if required RTL-SDR tools are available."""
+    tools = {}
+    for tool in [RTL_FM_BIN, RTL_POWER_BIN, "sox"]:
+        tools[tool] = shutil.which(tool) is not None
+    return tools
+
+
+class SDRStream:
+    """Manages an rtl_fm process and streams audio via a callback."""
+
+    def __init__(self):
+        self.process = None
+        self.running = False
+        self._freq = None
+        self._modulation = "fm"
+        self._squelch = 0
+        self._gain = "auto"
+        self._bandwidth = None
+        self._ppm = 0
+        self._device_index = 0
+
+    @property
+    def is_active(self):
+        return self.running and self.process is not None
+
+    @property
+    def current_freq(self):
+        return self._freq
+
+    async def start(self, freq_hz, modulation="fm", squelch=0, gain="auto",
+                    bandwidth=None, ppm=0, device_index=0):
+        """Start receiving on a frequency.
+
+        Args:
+            freq_hz: Frequency in Hz (e.g. 146525000 for 146.525 MHz)
+            modulation: Modulation type - fm, wbfm, am, usb, lsb, raw
+            squelch: Squelch level (0 = off)
+            gain: Gain in dB or "auto"
+            bandwidth: Filter bandwidth in Hz (None = auto based on modulation)
+            ppm: PPM frequency correction
+            device_index: RTL-SDR device index
+        """
+        await self.stop()
+
+        self._freq = freq_hz
+        self._modulation = modulation
+        self._squelch = squelch
+        self._gain = gain
+        self._bandwidth = bandwidth
+        self._ppm = ppm
+        self._device_index = device_index
+
+        # Build rtl_fm command
+        cmd = [RTL_FM_BIN]
+        cmd += ["-d", str(device_index)]
+        cmd += ["-f", str(freq_hz)]
+        cmd += ["-M", modulation]
+        cmd += ["-s", str(self._get_sample_rate(modulation, bandwidth))]
+        cmd += ["-p", str(ppm)]
+
+        if gain != "auto":
+            cmd += ["-g", str(gain)]
+
+        if squelch > 0:
+            cmd += ["-l", str(squelch)]
+
+        if bandwidth and modulation not in ("wbfm",):
+            cmd += ["-W", str(bandwidth)]
+
+        # Pipe through sox to convert to 16-bit PCM at target sample rate
+        sox_cmd = [
+            "sox", "-t", "raw", "-r", str(self._get_sample_rate(modulation, bandwidth)),
+            "-e", "signed", "-b", "16", "-c", "1", "-",
+            "-t", "raw", "-r", str(SAMPLE_RATE),
+            "-e", "signed", "-b", "16", "-c", "1", "-"
+        ]
+
+        full_cmd = " ".join(cmd) + " 2>/dev/null | " + " ".join(sox_cmd) + " 2>/dev/null"
+
+        logger.info("Starting SDR: %s", full_cmd)
+
+        self.process = await asyncio.create_subprocess_shell(
+            full_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            preexec_fn=lambda: signal.signal(signal.SIGPIPE, signal.SIG_DFL),
+        )
+        self.running = True
+        logger.info("SDR stream started on %.6f MHz (%s)", freq_hz / 1e6, modulation)
+
+    async def read_audio(self, chunk_size=4096):
+        """Read a chunk of raw PCM audio data."""
+        if not self.is_active or self.process.stdout is None:
+            return None
+        try:
+            data = await asyncio.wait_for(
+                self.process.stdout.read(chunk_size),
+                timeout=2.0
+            )
+            if not data:
+                self.running = False
+                return None
+            return data
+        except asyncio.TimeoutError:
+            return None
+        except Exception as e:
+            logger.error("Error reading audio: %s", e)
+            self.running = False
+            return None
+
+    async def stop(self):
+        """Stop the current SDR stream."""
+        if self.process:
+            try:
+                self.process.terminate()
+                await asyncio.wait_for(self.process.wait(), timeout=3.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                try:
+                    self.process.kill()
+                except ProcessLookupError:
+                    pass
+            self.process = None
+        self.running = False
+        self._freq = None
+        logger.info("SDR stream stopped")
+
+    def _get_sample_rate(self, modulation, bandwidth):
+        """Get appropriate sample rate for the modulation type."""
+        if modulation == "wbfm":
+            return 170000
+        if bandwidth:
+            # Sample rate should be at least 2x bandwidth
+            return max(bandwidth * 2, 24000)
+        return 24000
+
+
+class SDRScanner:
+    """Scans through a list of frequencies, pausing on active ones."""
+
+    def __init__(self, sdr_stream: SDRStream):
+        self.sdr = sdr_stream
+        self.frequencies = []
+        self.current_index = 0
+        self.scanning = False
+        self._scan_task = None
+        self.dwell_time = 2.0  # Seconds to listen on each frequency
+        self.active_dwell_time = 5.0  # Seconds to stay on active frequency
+        self.squelch = 10  # Squelch level for scan
+        self.modulation = "fm"
+        self.on_frequency_change = None  # Callback
+
+    async def start(self, frequencies, modulation="fm", squelch=10,
+                    dwell_time=2.0, active_dwell_time=5.0):
+        """Start scanning through frequencies."""
+        await self.stop()
+        self.frequencies = frequencies
+        self.modulation = modulation
+        self.squelch = squelch
+        self.dwell_time = dwell_time
+        self.active_dwell_time = active_dwell_time
+        self.current_index = 0
+        self.scanning = True
+        self._scan_task = asyncio.create_task(self._scan_loop())
+        logger.info("Scanner started with %d frequencies", len(frequencies))
+
+    async def stop(self):
+        """Stop scanning."""
+        self.scanning = False
+        if self._scan_task:
+            self._scan_task.cancel()
+            try:
+                await self._scan_task
+            except asyncio.CancelledError:
+                pass
+            self._scan_task = None
+
+    async def _scan_loop(self):
+        """Main scan loop."""
+        while self.scanning and self.frequencies:
+            freq = self.frequencies[self.current_index]
+            await self.sdr.start(
+                freq_hz=freq,
+                modulation=self.modulation,
+                squelch=self.squelch,
+            )
+
+            if self.on_frequency_change:
+                await self.on_frequency_change(freq, self.current_index)
+
+            # Listen for activity
+            await asyncio.sleep(self.dwell_time)
+
+            # Move to next frequency
+            self.current_index = (self.current_index + 1) % len(self.frequencies)
+
+
+class SpectrumAnalyzer:
+    """Uses rtl_power to generate spectrum data."""
+
+    def __init__(self):
+        self.process = None
+        self.running = False
+
+    async def sweep(self, start_hz, stop_hz, bin_size=10000, integration_time=1,
+                    device_index=0, ppm=0, gain="auto"):
+        """Run a single spectrum sweep and return the data.
+
+        Returns list of (freq_hz, power_db) tuples.
+        """
+        cmd = [
+            RTL_POWER_BIN,
+            "-d", str(device_index),
+            "-f", f"{start_hz}:{stop_hz}:{bin_size}",
+            "-i", str(integration_time),
+            "-1",  # Single sweep
+            "-p", str(ppm),
+        ]
+        if gain != "auto":
+            cmd += ["-g", str(gain)]
+
+        cmd_str = " ".join(cmd)
+        logger.info("Spectrum sweep: %s", cmd_str)
+
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                cmd_str,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return []
+
+        results = []
+        for line in stdout.decode().strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split(", ")
+            if len(parts) < 7:
+                continue
+            # Format: date, time, start_hz, stop_hz, bin_size, num_samples, db_values...
+            try:
+                start = float(parts[2])
+                bin_sz = float(parts[4])
+                db_values = [float(v) for v in parts[6:]]
+                for i, db in enumerate(db_values):
+                    freq = start + i * bin_sz
+                    results.append({"freq": freq, "power": db})
+            except (ValueError, IndexError):
+                continue
+
+        return results
