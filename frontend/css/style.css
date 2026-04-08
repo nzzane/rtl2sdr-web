@@ -181,6 +181,17 @@ html, body {
   text-align: right;
 }
 
+.squelch-indicator {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: monospace;
+  color: transparent;
+  transition: color 0.2s;
+}
+.squelch-indicator.active {
+  color: var(--warning);
+}
+
 /* === Tabs === */
 .tabs {
   display: flex;
@@ -441,6 +452,11 @@ select.input { cursor: pointer; }
 .spectrum-display canvas {
   width: 100%;
   height: auto;
+  cursor: crosshair;
+}
+
+#fft-canvas {
+  cursor: crosshair;
 }
 
 /* === Manage === */

@@ -9,7 +9,6 @@
   let activeChannelId = null;
   let isPlaying = false;
   let currentSquelch = 0;
-  let squelchDebounceTimer = null;
 
   const audio = window.audioEngine;
   const viz = new Visualizer();
@@ -133,7 +132,6 @@
       cmd: 'tune',
       freq: ch.freq,
       modulation: ch.modulation,
-      squelch: currentSquelch,
     });
 
     updateFreqDisplay(ch.freq, ch.name);
@@ -155,10 +153,11 @@
 
     activeChannelId = null;
 
-    // Sync manual squelch to global squelch
+    // Sync manual squelch to global (client-side only)
     currentSquelch = squelch;
     $('#global-squelch').value = squelch;
     $('#global-squelch-val').textContent = squelch;
+    audio.setSquelch(squelch);
     viz.setSquelch(squelch);
 
     audio.init();
@@ -173,7 +172,6 @@
       cmd: 'tune',
       freq: freqHz,
       modulation: mod,
-      squelch: squelch,
       gain: gain,
       bandwidth: bw,
       ppm: ppm,
@@ -184,23 +182,18 @@
     renderChannels($('#channel-search').value, $('#channel-filter-tag').value);
   }
 
-  // --- Global Squelch Update ---
+  // --- Global Squelch Update (client-side only) ---
   function updateGlobalSquelch(val) {
     currentSquelch = val;
     $('#global-squelch-val').textContent = val;
+
+    // Client-side squelch - no server restart needed
+    audio.setSquelch(val);
     viz.setSquelch(val);
 
     // Sync to manual tab
     $('#manual-squelch').value = val;
     $('#manual-squelch-val').textContent = val;
-
-    // Debounce the actual squelch update to the server
-    clearTimeout(squelchDebounceTimer);
-    squelchDebounceTimer = setTimeout(() => {
-      if (audio.ws && audio.ws.readyState === WebSocket.OPEN) {
-        audio.send({ cmd: 'squelch', squelch: val });
-      }
-    }, 300);
   }
 
   // --- Scan ---
@@ -480,7 +473,6 @@
       if (sdr.modulation) parts.push(sdr.modulation.toUpperCase());
       if (sdr.gain && sdr.gain !== 'auto') parts.push('Gain: ' + sdr.gain + 'dB');
       else parts.push('Auto gain');
-      if (sdr.squelch > 0) parts.push('SQ: ' + sdr.squelch);
       detail.textContent = parts.join(' | ');
       detail.className = 'sdr-detail';
     } else if (sdr.state === 'starting') {
@@ -643,10 +635,60 @@
     });
   }
 
+  // --- Spectrum click-to-tune ---
+  function tuneFromSpectrum(freqHz) {
+    const mod = $('#spectrum-tune-mod').value;
+    activeChannelId = null;
+
+    audio.init();
+    if (!audio.playing) {
+      audio.play();
+    }
+    isPlaying = true;
+    updatePlayButton();
+    viz.start();
+
+    audio.send({
+      cmd: 'tune',
+      freq: freqHz,
+      modulation: mod,
+    });
+
+    spectrumChart.setTunedFreq(freqHz);
+    updateFreqDisplay(freqHz, 'Spectrum: ' + mod.toUpperCase());
+    updateStatus('active', 'Tuning...');
+    renderChannels($('#channel-search').value, $('#channel-filter-tag').value);
+  }
+
   // --- Init ---
   async function init() {
     bindEvents();
     viz.init('waveform-canvas', 'fft-canvas');
+
+    // Wire up SDR#-style squelch drag on FFT canvas
+    viz.onSquelchDrag = (level) => {
+      currentSquelch = level;
+      $('#global-squelch').value = level;
+      $('#global-squelch-val').textContent = level;
+      $('#manual-squelch').value = level;
+      $('#manual-squelch-val').textContent = level;
+      audio.setSquelch(level);
+    };
+
+    // Wire up spectrum click-to-tune
+    spectrumChart.onFreqClick = (freqHz) => {
+      tuneFromSpectrum(freqHz);
+    };
+
+    // Squelch change callback for visual feedback
+    audio.onSquelchChange = (isSquelched, rms, threshold) => {
+      const indicator = $('#squelch-indicator');
+      if (indicator) {
+        indicator.textContent = isSquelched ? 'MUTED' : '';
+        indicator.className = 'squelch-indicator' + (isSquelched ? ' active' : '');
+      }
+    };
+
     await loadPresets();
     connectStatusWs();
 

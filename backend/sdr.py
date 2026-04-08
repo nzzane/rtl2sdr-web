@@ -29,13 +29,12 @@ class SDRStream:
         self.running = False
         self._freq = None
         self._modulation = "fm"
-        self._squelch = 0
         self._gain = "auto"
         self._bandwidth = None
         self._ppm = 0
         self._device_index = 0
         self._last_error = None
-        self._state = "idle"  # idle, starting, receiving, squelched, error, stopped
+        self._state = "idle"  # idle, starting, receiving, error, stopped
 
     @property
     def is_active(self):
@@ -44,10 +43,6 @@ class SDRStream:
     @property
     def current_freq(self):
         return self._freq
-
-    @property
-    def current_squelch(self):
-        return self._squelch
 
     @property
     def state(self):
@@ -62,27 +57,25 @@ class SDRStream:
             "state": self._state,
             "freq": self._freq,
             "modulation": self._modulation,
-            "squelch": self._squelch,
             "gain": self._gain,
             "error": self._last_error,
         }
 
-    async def start(self, freq_hz, modulation="fm", squelch=0, gain="auto",
+    async def start(self, freq_hz, modulation="fm", gain="auto",
                     bandwidth=None, ppm=0, device_index=0):
-        """Start receiving on a frequency."""
+        """Start receiving on a frequency. Squelch is handled client-side."""
         await self.stop()
 
         self._last_error = None
         self._state = "starting"
         self._freq = freq_hz
         self._modulation = modulation
-        self._squelch = squelch
         self._gain = gain
         self._bandwidth = bandwidth
         self._ppm = ppm
         self._device_index = device_index
 
-        # Build rtl_fm command
+        # Build rtl_fm command (no squelch - handled client-side for instant response)
         cmd = [RTL_FM_BIN]
         cmd += ["-d", str(device_index)]
         cmd += ["-f", str(freq_hz)]
@@ -92,9 +85,6 @@ class SDRStream:
 
         if gain != "auto":
             cmd += ["-g", str(gain)]
-
-        if squelch > 0:
-            cmd += ["-l", str(squelch)]
 
         if bandwidth and modulation not in ("wbfm",):
             cmd += ["-W", str(bandwidth)]
@@ -165,22 +155,6 @@ class SDRStream:
         except asyncio.TimeoutError:
             # Process still running after 2s - good, it's working
             pass
-
-    async def update_squelch(self, squelch):
-        """Update squelch level. Requires restarting the stream."""
-        if not self.is_active or squelch == self._squelch:
-            self._squelch = squelch
-            return
-        # Restart with new squelch
-        await self.start(
-            freq_hz=self._freq,
-            modulation=self._modulation,
-            squelch=squelch,
-            gain=self._gain,
-            bandwidth=self._bandwidth,
-            ppm=self._ppm,
-            device_index=self._device_index,
-        )
 
     async def read_audio(self, chunk_size=4096):
         """Read a chunk of raw PCM audio data."""
