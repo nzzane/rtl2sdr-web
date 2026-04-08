@@ -85,6 +85,7 @@ html, body {
 }
 .status-dot.active { background: var(--success); animation: pulse 1.5s infinite; }
 .status-dot.scanning { background: var(--warning); animation: pulse 0.8s infinite; }
+.status-dot.error { background: var(--danger); animation: pulse 0.6s infinite; }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -94,6 +95,90 @@ html, body {
 .status-text {
   font-size: 12px;
   color: var(--text-dim);
+}
+
+/* === Status Bar === */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 32px;
+  gap: 12px;
+}
+
+.status-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sdr-state-badge {
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.sdr-state-badge.idle { background: var(--bg-input); color: var(--text-muted); }
+.sdr-state-badge.starting { background: #422006; color: var(--warning); }
+.sdr-state-badge.receiving { background: #052e16; color: var(--success); }
+.sdr-state-badge.error { background: #4c0519; color: var(--danger); }
+.sdr-state-badge.stopped { background: var(--bg-input); color: var(--text-muted); }
+
+.sdr-detail {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sdr-detail.error-text {
+  color: var(--danger);
+}
+
+.squelch-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+.squelch-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.range-inline {
+  width: 80px;
+  accent-color: var(--primary);
+}
+
+.squelch-val {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text-dim);
+  min-width: 18px;
+  text-align: right;
 }
 
 /* === Tabs === */
@@ -274,13 +359,32 @@ select.input { cursor: pointer; }
   gap: 4px;
   flex-shrink: 0;
 }
+
+/* Tag color system */
 .tag {
   padding: 1px 6px;
   border-radius: 3px;
   font-size: 10px;
+  font-weight: 500;
   background: var(--bg-input);
   color: var(--text-muted);
 }
+.tag-aviation    { background: #1e3a5f; color: #7dd3fc; }
+.tag-marine      { background: #134e4a; color: #5eead4; }
+.tag-amateur     { background: #3b0764; color: #d8b4fe; }
+.tag-cb          { background: #713f12; color: #fde68a; }
+.tag-uhf-cb      { background: #78350f; color: #fdba74; }
+.tag-emergency   { background: #4c0519; color: #fda4af; }
+.tag-broadcast   { background: #14532d; color: #86efac; }
+.tag-wellington  { background: #1e3a5f; color: #93c5fd; }
+.tag-weather     { background: #0c4a6e; color: #7dd3fc; }
+.tag-utility     { background: #1c1917; color: #a8a29e; }
+.tag-repeater    { background: #4a1d96; color: #c4b5fd; }
+.tag-data        { background: #064e3b; color: #6ee7b7; }
+.tag-space       { background: #1e1b4b; color: #a5b4fc; }
+.tag-2m          { background: #312e81; color: #a5b4fc; }
+.tag-70cm        { background: #4c1d95; color: #c4b5fd; }
+.tag-custom      { background: #365314; color: #bef264; }
 
 /* === Scan === */
 .scan-controls { margin-bottom: 16px; }
@@ -494,4 +598,6 @@ select.input { cursor: pointer; }
   .ch-tags { display: none; }
   .visualizer-bar { padding: 4px 8px; }
   #fft-canvas { display: none; }
+  .status-bar { padding: 4px 10px; }
+  .range-inline { width: 60px; }
 }

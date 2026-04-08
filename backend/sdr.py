@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import signal
 import shutil
 
@@ -33,6 +34,8 @@ class SDRStream:
         self._bandwidth = None
         self._ppm = 0
         self._device_index = 0
+        self._last_error = None
+        self._state = "idle"  # idle, starting, receiving, squelched, error, stopped
 
     @property
     def is_active(self):
@@ -42,21 +45,35 @@ class SDRStream:
     def current_freq(self):
         return self._freq
 
+    @property
+    def current_squelch(self):
+        return self._squelch
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def last_error(self):
+        return self._last_error
+
+    def get_status(self):
+        return {
+            "state": self._state,
+            "freq": self._freq,
+            "modulation": self._modulation,
+            "squelch": self._squelch,
+            "gain": self._gain,
+            "error": self._last_error,
+        }
+
     async def start(self, freq_hz, modulation="fm", squelch=0, gain="auto",
                     bandwidth=None, ppm=0, device_index=0):
-        """Start receiving on a frequency.
-
-        Args:
-            freq_hz: Frequency in Hz (e.g. 146525000 for 146.525 MHz)
-            modulation: Modulation type - fm, wbfm, am, usb, lsb, raw
-            squelch: Squelch level (0 = off)
-            gain: Gain in dB or "auto"
-            bandwidth: Filter bandwidth in Hz (None = auto based on modulation)
-            ppm: PPM frequency correction
-            device_index: RTL-SDR device index
-        """
+        """Start receiving on a frequency."""
         await self.stop()
 
+        self._last_error = None
+        self._state = "starting"
         self._freq = freq_hz
         self._modulation = modulation
         self._squelch = squelch
@@ -90,18 +107,80 @@ class SDRStream:
             "-e", "signed", "-b", "16", "-c", "1", "-"
         ]
 
-        full_cmd = " ".join(cmd) + " 2>/dev/null | " + " ".join(sox_cmd) + " 2>/dev/null"
+        # Redirect rtl_fm stderr to a fd we can read, sox stderr to /dev/null
+        full_cmd = " ".join(cmd) + " 2>&1 | " + " ".join(sox_cmd) + " 2>/dev/null"
 
         logger.info("Starting SDR: %s", full_cmd)
 
-        self.process = await asyncio.create_subprocess_shell(
-            full_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            preexec_fn=lambda: signal.signal(signal.SIGPIPE, signal.SIG_DFL),
-        )
+        try:
+            self.process = await asyncio.create_subprocess_shell(
+                full_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                preexec_fn=os.setsid,  # Create new process group for clean kill
+            )
+        except Exception as e:
+            self._last_error = f"Failed to start rtl_fm: {e}"
+            self._state = "error"
+            logger.error("Failed to start SDR process: %s", e)
+            return
+
         self.running = True
+        self._state = "receiving"
+
+        # Start a background task to monitor stderr for errors
+        asyncio.create_task(self._monitor_process())
+
         logger.info("SDR stream started on %.6f MHz (%s)", freq_hz / 1e6, modulation)
+
+    async def _monitor_process(self):
+        """Monitor the SDR process for early termination / errors."""
+        if not self.process:
+            return
+        try:
+            retcode = await asyncio.wait_for(self.process.wait(), timeout=2.0)
+            # Process exited within 2 seconds - likely an error
+            if retcode != 0 and self.running:
+                stderr_data = b""
+                if self.process.stderr:
+                    try:
+                        stderr_data = await asyncio.wait_for(
+                            self.process.stderr.read(4096), timeout=1.0
+                        )
+                    except asyncio.TimeoutError:
+                        pass
+                err_msg = stderr_data.decode(errors="replace").strip()
+                if err_msg:
+                    # Clean up common rtl_fm error messages
+                    for line in err_msg.split("\n"):
+                        line = line.strip()
+                        if line and not line.startswith("Found") and not line.startswith("Exact"):
+                            self._last_error = line
+                            break
+                else:
+                    self._last_error = f"rtl_fm exited with code {retcode}"
+                self._state = "error"
+                self.running = False
+                logger.error("SDR process failed: %s", self._last_error)
+        except asyncio.TimeoutError:
+            # Process still running after 2s - good, it's working
+            pass
+
+    async def update_squelch(self, squelch):
+        """Update squelch level. Requires restarting the stream."""
+        if not self.is_active or squelch == self._squelch:
+            self._squelch = squelch
+            return
+        # Restart with new squelch
+        await self.start(
+            freq_hz=self._freq,
+            modulation=self._modulation,
+            squelch=squelch,
+            gain=self._gain,
+            bandwidth=self._bandwidth,
+            ppm=self._ppm,
+            device_index=self._device_index,
+        )
 
     async def read_audio(self, chunk_size=4096):
         """Read a chunk of raw PCM audio data."""
@@ -114,12 +193,19 @@ class SDRStream:
             )
             if not data:
                 self.running = False
+                if self._state == "receiving":
+                    self._state = "stopped"
+                    self._last_error = "Stream ended unexpectedly"
                 return None
+            if self._state != "receiving":
+                self._state = "receiving"
             return data
         except asyncio.TimeoutError:
             return None
         except Exception as e:
             logger.error("Error reading audio: %s", e)
+            self._last_error = str(e)
+            self._state = "error"
             self.running = False
             return None
 
@@ -127,9 +213,16 @@ class SDRStream:
         """Stop the current SDR stream."""
         if self.process:
             try:
-                self.process.terminate()
-                await asyncio.wait_for(self.process.wait(), timeout=3.0)
-            except (asyncio.TimeoutError, ProcessLookupError):
+                # Kill the entire process group to ensure rtl_fm and sox are both killed
+                pgid = os.getpgid(self.process.pid)
+                os.killpg(pgid, signal.SIGTERM)
+                await asyncio.wait_for(self.process.wait(), timeout=2.0)
+            except (asyncio.TimeoutError, ProcessLookupError, OSError):
+                try:
+                    pgid = os.getpgid(self.process.pid)
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
                 try:
                     self.process.kill()
                 except ProcessLookupError:
@@ -137,6 +230,7 @@ class SDRStream:
             self.process = None
         self.running = False
         self._freq = None
+        self._state = "idle"
         logger.info("SDR stream stopped")
 
     def _get_sample_rate(self, modulation, bandwidth):
@@ -144,7 +238,6 @@ class SDRStream:
         if modulation == "wbfm":
             return 170000
         if bandwidth:
-            # Sample rate should be at least 2x bandwidth
             return max(bandwidth * 2, 24000)
         return 24000
 
@@ -158,11 +251,11 @@ class SDRScanner:
         self.current_index = 0
         self.scanning = False
         self._scan_task = None
-        self.dwell_time = 2.0  # Seconds to listen on each frequency
-        self.active_dwell_time = 5.0  # Seconds to stay on active frequency
-        self.squelch = 10  # Squelch level for scan
+        self.dwell_time = 2.0
+        self.active_dwell_time = 5.0
+        self.squelch = 10
         self.modulation = "fm"
-        self.on_frequency_change = None  # Callback
+        self.on_frequency_change = None
 
     async def start(self, frequencies, modulation="fm", squelch=10,
                     dwell_time=2.0, active_dwell_time=5.0):
@@ -202,10 +295,7 @@ class SDRScanner:
             if self.on_frequency_change:
                 await self.on_frequency_change(freq, self.current_index)
 
-            # Listen for activity
             await asyncio.sleep(self.dwell_time)
-
-            # Move to next frequency
             self.current_index = (self.current_index + 1) % len(self.frequencies)
 
 
@@ -218,16 +308,13 @@ class SpectrumAnalyzer:
 
     async def sweep(self, start_hz, stop_hz, bin_size=10000, integration_time=1,
                     device_index=0, ppm=0, gain="auto"):
-        """Run a single spectrum sweep and return the data.
-
-        Returns list of (freq_hz, power_db) tuples.
-        """
+        """Run a single spectrum sweep and return the data."""
         cmd = [
             RTL_POWER_BIN,
             "-d", str(device_index),
             "-f", f"{start_hz}:{stop_hz}:{bin_size}",
             "-i", str(integration_time),
-            "-1",  # Single sweep
+            "-1",
             "-p", str(ppm),
         ]
         if gain != "auto":
@@ -254,7 +341,6 @@ class SpectrumAnalyzer:
             parts = line.split(", ")
             if len(parts) < 7:
                 continue
-            # Format: date, time, start_hz, stop_hz, bin_size, num_samples, db_values...
             try:
                 start = float(parts[2])
                 bin_sz = float(parts[4])

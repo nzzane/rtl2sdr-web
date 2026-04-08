@@ -3,15 +3,20 @@ version: "3.8"
 services:
   rtlsdr-web:
     build: .
+    image: rtlsdr-web:latest
     container_name: rtlsdr-web
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/app/data
+      - rtlsdr-data:/app/data
     devices:
       - /dev/bus/usb:/dev/bus/usb
     privileged: true
     environment:
       - HOST=0.0.0.0
       - PORT=8080
+
+volumes:
+  rtlsdr-data:
+    driver: local

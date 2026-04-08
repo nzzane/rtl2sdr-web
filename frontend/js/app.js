@@ -8,10 +8,36 @@
   let presets = { channels: [], groups: [] };
   let activeChannelId = null;
   let isPlaying = false;
+  let currentSquelch = 0;
+  let squelchDebounceTimer = null;
 
   const audio = window.audioEngine;
   const viz = new Visualizer();
   const spectrumChart = new SpectrumChart('spectrum-canvas');
+
+  // --- Tag color map ---
+  const TAG_COLORS = {
+    'aviation':   'tag-aviation',
+    'marine':     'tag-marine',
+    'amateur':    'tag-amateur',
+    'cb':         'tag-cb',
+    'uhf-cb':     'tag-uhf-cb',
+    'emergency':  'tag-emergency',
+    'broadcast':  'tag-broadcast',
+    'wellington': 'tag-wellington',
+    'weather':    'tag-weather',
+    'utility':    'tag-utility',
+    'repeater':   'tag-repeater',
+    'data':       'tag-data',
+    'space':      'tag-space',
+    '2m':         'tag-2m',
+    '70cm':       'tag-70cm',
+    'custom':     'tag-custom',
+  };
+
+  function getTagClass(tag) {
+    return TAG_COLORS[tag] || '';
+  }
 
   // --- Helpers ---
   function formatFreq(hz) {
@@ -70,12 +96,11 @@
         </div>
         <span class="ch-mod ${ch.modulation}">${ch.modulation}</span>
         <div class="ch-tags">
-          ${(ch.tags || []).slice(0, 3).map(t => `<span class="tag">${esc(t)}</span>`).join('')}
+          ${(ch.tags || []).slice(0, 3).map(t => `<span class="tag ${getTagClass(t)}">${esc(t)}</span>`).join('')}
         </div>
       </div>
     `).join('');
 
-    // Click handlers
     list.querySelectorAll('.channel-item').forEach(el => {
       el.addEventListener('click', () => tuneChannel(parseInt(el.dataset.id)));
     });
@@ -96,22 +121,23 @@
 
     activeChannelId = channelId;
 
-    // Start audio engine if not already
     audio.init();
-    audio.play();
+    if (!audio.playing) {
+      audio.play();
+    }
     isPlaying = true;
     updatePlayButton();
     viz.start();
 
-    // Send tune command via WebSocket
     audio.send({
       cmd: 'tune',
       freq: ch.freq,
       modulation: ch.modulation,
+      squelch: currentSquelch,
     });
 
     updateFreqDisplay(ch.freq, ch.name);
-    updateStatus('active', 'Receiving');
+    updateStatus('active', 'Tuning...');
     renderChannels($('#channel-search').value, $('#channel-filter-tag').value);
   }
 
@@ -129,8 +155,16 @@
 
     activeChannelId = null;
 
+    // Sync manual squelch to global squelch
+    currentSquelch = squelch;
+    $('#global-squelch').value = squelch;
+    $('#global-squelch-val').textContent = squelch;
+    viz.setSquelch(squelch);
+
     audio.init();
-    audio.play();
+    if (!audio.playing) {
+      audio.play();
+    }
     isPlaying = true;
     updatePlayButton();
     viz.start();
@@ -146,8 +180,27 @@
     });
 
     updateFreqDisplay(freqHz, 'Manual: ' + mod.toUpperCase());
-    updateStatus('active', 'Receiving');
+    updateStatus('active', 'Tuning...');
     renderChannels($('#channel-search').value, $('#channel-filter-tag').value);
+  }
+
+  // --- Global Squelch Update ---
+  function updateGlobalSquelch(val) {
+    currentSquelch = val;
+    $('#global-squelch-val').textContent = val;
+    viz.setSquelch(val);
+
+    // Sync to manual tab
+    $('#manual-squelch').value = val;
+    $('#manual-squelch-val').textContent = val;
+
+    // Debounce the actual squelch update to the server
+    clearTimeout(squelchDebounceTimer);
+    squelchDebounceTimer = setTimeout(() => {
+      if (audio.ws && audio.ws.readyState === WebSocket.OPEN) {
+        audio.send({ cmd: 'squelch', squelch: val });
+      }
+    }, 300);
   }
 
   // --- Scan ---
@@ -166,12 +219,13 @@
     const dwell = parseFloat($('#scan-dwell').value);
 
     audio.init();
-    audio.play();
+    if (!audio.playing) {
+      audio.play();
+    }
     isPlaying = true;
     updatePlayButton();
     viz.start();
 
-    // Render scan channel pills
     renderScanChannels(channels);
 
     await api('POST', 'scan', {
@@ -221,6 +275,7 @@
     viz.stop();
     updateFreqDisplay(null);
     updateStatus('', 'Idle');
+    updateSDRStatus({ state: 'idle', error: null });
     renderChannels($('#channel-search').value, $('#channel-filter-tag').value);
     $('#btn-scan-start').disabled = false;
     $('#btn-scan-stop').disabled = true;
@@ -264,7 +319,6 @@
       tags: $('#add-ch-tags').value.split(',').map(t => t.trim()).filter(Boolean),
     });
 
-    // Clear form
     $('#add-ch-name').value = '';
     $('#add-ch-freq').value = '';
     $('#add-ch-desc').value = '';
@@ -409,6 +463,35 @@
     $('#status-text').textContent = text;
   }
 
+  function updateSDRStatus(sdr) {
+    if (!sdr) return;
+    const badge = $('#sdr-state-badge');
+    const detail = $('#sdr-detail');
+
+    badge.textContent = sdr.state || 'IDLE';
+    badge.className = 'sdr-state-badge ' + (sdr.state || 'idle');
+
+    if (sdr.error) {
+      detail.textContent = sdr.error;
+      detail.className = 'sdr-detail error-text';
+      updateStatus('error', 'Error');
+    } else if (sdr.state === 'receiving') {
+      const parts = [];
+      if (sdr.modulation) parts.push(sdr.modulation.toUpperCase());
+      if (sdr.gain && sdr.gain !== 'auto') parts.push('Gain: ' + sdr.gain + 'dB');
+      else parts.push('Auto gain');
+      if (sdr.squelch > 0) parts.push('SQ: ' + sdr.squelch);
+      detail.textContent = parts.join(' | ');
+      detail.className = 'sdr-detail';
+    } else if (sdr.state === 'starting') {
+      detail.textContent = 'Starting rtl_fm process...';
+      detail.className = 'sdr-detail';
+    } else {
+      detail.textContent = '';
+      detail.className = 'sdr-detail';
+    }
+  }
+
   function updatePlayButton() {
     $('#icon-play').style.display = isPlaying ? 'none' : '';
     $('#icon-pause').style.display = isPlaying ? '' : 'none';
@@ -428,6 +511,12 @@
     ws.onmessage = (e) => {
       try {
         const status = JSON.parse(e.data);
+
+        // Update SDR status bar
+        if (status.sdr) {
+          updateSDRStatus(status.sdr);
+        }
+
         if (status.scanning) {
           updateStatus('scanning', 'Scanning');
           if (status.current_freq) {
@@ -436,14 +525,18 @@
             if (status.scan_index !== null) {
               $('#scan-progress').textContent =
                 `Channel ${status.scan_index + 1} of ${status.scan_total}`;
-              // Update scan channel pills
               $$('.scan-ch-pill').forEach((pill, i) => {
                 pill.classList.toggle('active', i === status.scan_index);
               });
             }
           }
-        } else if (status.streaming) {
+        } else if (status.streaming && (!status.sdr || status.sdr.state !== 'error')) {
           updateStatus('active', 'Receiving');
+        } else if (!status.streaming && !status.scanning && isPlaying) {
+          // Check if there's an error
+          if (status.sdr && status.sdr.state === 'error') {
+            updateStatus('error', 'Error');
+          }
         }
       } catch (err) { /* ignore */ }
     };
@@ -483,12 +576,20 @@
     $('#btn-manual-stop').addEventListener('click', stopAll);
     $('#btn-manual-save').addEventListener('click', saveManualAsPreset);
 
-    // Squelch display
+    // Manual squelch display syncs to global
     $('#manual-squelch').addEventListener('input', (e) => {
-      $('#manual-squelch-val').textContent = e.target.value;
+      const val = parseInt(e.target.value);
+      $('#manual-squelch-val').textContent = val;
+      $('#global-squelch').value = val;
+      updateGlobalSquelch(val);
     });
     $('#scan-squelch').addEventListener('input', (e) => {
       $('#scan-squelch-val').textContent = e.target.value;
+    });
+
+    // Global squelch control (status bar)
+    $('#global-squelch').addEventListener('input', (e) => {
+      updateGlobalSquelch(parseInt(e.target.value));
     });
 
     // Scan controls
@@ -556,7 +657,10 @@
         .filter(([, ok]) => !ok)
         .map(([name]) => name);
       if (missing.length > 0) {
-        console.warn('Missing tools:', missing.join(', '));
+        updateSDRStatus({
+          state: 'error',
+          error: 'Missing tools: ' + missing.join(', '),
+        });
       }
     }
   }

@@ -29,6 +29,21 @@
       </div>
     </header>
 
+    <!-- Status / Error Bar -->
+    <div class="status-bar" id="status-bar">
+      <div class="status-bar-left">
+        <span class="sdr-state-badge" id="sdr-state-badge">IDLE</span>
+        <span class="sdr-detail" id="sdr-detail"></span>
+      </div>
+      <div class="status-bar-right">
+        <label class="squelch-inline" title="Squelch level">
+          <span class="squelch-label">SQ</span>
+          <input type="range" id="global-squelch" min="0" max="100" value="0" class="range range-inline">
+          <span class="squelch-val" id="global-squelch-val">0</span>
+        </label>
+      </div>
+    </div>
+
     <!-- Tab Navigation -->
     <nav class="tabs">
       <button class="tab active" data-tab="channels">Channels</button>

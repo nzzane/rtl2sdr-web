@@ -4,8 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import struct
-import base64
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -66,6 +64,7 @@ async def get_status():
         "scanning": scanner.scanning,
         "current_freq": sdr_stream.current_freq,
         "sample_rate": SAMPLE_RATE,
+        "sdr": sdr_stream.get_status(),
     }
 
 
@@ -86,7 +85,6 @@ async def update_presets(data: dict):
 async def add_channel(channel: dict):
     """Add a single channel to presets."""
     presets = load_presets()
-    # Assign ID
     max_id = max((ch.get("id", 0) for ch in presets["channels"]), default=0)
     channel["id"] = max_id + 1
     presets["channels"].append(channel)
@@ -171,7 +169,16 @@ async def tune(params: dict):
         "ok": True,
         "freq": freq,
         "streaming": sdr_stream.is_active,
+        "sdr": sdr_stream.get_status(),
     }
+
+
+@app.post("/api/squelch")
+async def update_squelch(params: dict):
+    """Update squelch level on the active stream."""
+    squelch = int(params.get("squelch", 0))
+    await sdr_stream.update_squelch(squelch)
+    return {"ok": True, "squelch": squelch, "sdr": sdr_stream.get_status()}
 
 
 @app.post("/api/stop")
@@ -252,7 +259,11 @@ async def audio_websocket(ws: WebSocket):
                         bandwidth=data.get("bandwidth"),
                         ppm=int(data.get("ppm", 0)),
                     )
-                    await ws.send_json({"event": "tuned", "freq": data["freq"]})
+                    await ws.send_json({
+                        "event": "tuned",
+                        "freq": data["freq"],
+                        "sdr": sdr_stream.get_status(),
+                    })
 
                 elif cmd == "stop":
                     await scanner.stop()
@@ -268,6 +279,13 @@ async def audio_websocket(ws: WebSocket):
                     )
                     await ws.send_json({"event": "scanning", "count": len(freqs)})
 
+                elif cmd == "squelch":
+                    await sdr_stream.update_squelch(int(data.get("squelch", 0)))
+                    await ws.send_json({
+                        "event": "squelch_updated",
+                        "squelch": sdr_stream.current_squelch,
+                    })
+
             except asyncio.TimeoutError:
                 pass
 
@@ -275,7 +293,6 @@ async def audio_websocket(ws: WebSocket):
             if sdr_stream.is_active:
                 audio_data = await sdr_stream.read_audio(chunk_size=8192)
                 if audio_data:
-                    # Send as binary WebSocket frame
                     await ws.send_bytes(audio_data)
             else:
                 await asyncio.sleep(0.05)
@@ -301,6 +318,7 @@ async def status_websocket(ws: WebSocket):
                 "current_freq": sdr_stream.current_freq,
                 "scan_index": scanner.current_index if scanner.scanning else None,
                 "scan_total": len(scanner.frequencies) if scanner.scanning else None,
+                "sdr": sdr_stream.get_status(),
             }
             await ws.send_json(status)
             await asyncio.sleep(0.5)

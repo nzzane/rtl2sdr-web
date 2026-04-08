@@ -1,0 +1,33 @@
+[
+  {
+    "version": "2",
+    "templates": [
+      {
+        "type": 3,
+        "title": "RTL-SDR Web UI",
+        "description": "Web-based SDR receiver with presets, scanner, and spectrum analyzer for RTL-SDR dongles",
+        "categories": ["radio", "sdr"],
+        "platform": "linux",
+        "repository": {
+          "url": "https://github.com/nzzane/rtl2sdr-web",
+          "stackfile": "docker-compose.yml"
+        },
+        "env": [
+          {
+            "name": "PORT",
+            "label": "Web UI Port",
+            "default": "8080",
+            "description": "Port for the web interface"
+          }
+        ],
+        "volumes": [
+          {
+            "container": "/app/data",
+            "bind": "rtlsdr-data"
+          }
+        ],
+        "privileged": true
+      }
+    ]
+  }
+]

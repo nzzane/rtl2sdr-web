@@ -1,5 +1,6 @@
 /**
  * Audio visualizer - renders waveform and FFT spectrum on canvas elements.
+ * Shows squelch threshold line and dims waveform when signal is below squelch.
  */
 class Visualizer {
   constructor() {
@@ -12,6 +13,8 @@ class Visualizer {
 
     // Colors
     this.waveColor = '#38bdf8';
+    this.waveColorSquelched = '#334155';
+    this.squelchLineColor = '#f59e0b';
     this.fftBarColor = '#38bdf8';
     this.fftPeakColor = '#0ea5e9';
     this.bgColor = '#0f172a';
@@ -20,6 +23,12 @@ class Visualizer {
     // FFT peaks (for peak hold display)
     this.fftPeaks = null;
     this.peakDecay = 0.98;
+
+    // Squelch tracking
+    this.squelchLevel = 0; // 0-100
+    this.isSquelched = false;
+    this._audioLevel = 0; // Running audio level (0-1)
+    this._audioLevelDecay = 0.95;
   }
 
   init(waveformCanvasId, fftCanvasId) {
@@ -35,11 +44,14 @@ class Visualizer {
       this._resizeCanvas(this.fftCanvas);
     }
 
-    // Handle resize
     window.addEventListener('resize', () => {
       if (this.waveformCanvas) this._resizeCanvas(this.waveformCanvas);
       if (this.fftCanvas) this._resizeCanvas(this.fftCanvas);
     });
+  }
+
+  setSquelch(level) {
+    this.squelchLevel = level;
   }
 
   start() {
@@ -54,7 +66,6 @@ class Visualizer {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
     }
-    // Clear canvases
     if (this.waveformCtx) {
       this.waveformCtx.fillStyle = this.bgColor;
       this.waveformCtx.fillRect(0, 0, this.waveformCanvas.width, this.waveformCanvas.height);
@@ -85,14 +96,15 @@ class Visualizer {
 
   _drawWaveform(data) {
     const ctx = this.waveformCtx;
-    const w = this.waveformCanvas.width;
-    const h = this.waveformCanvas.height;
+    const rect = this.waveformCanvas.getBoundingClientRect();
+    const w = rect.width;
+    const h = rect.height;
 
     // Background
     ctx.fillStyle = this.bgColor;
     ctx.fillRect(0, 0, w, h);
 
-    // Grid lines
+    // Center line
     ctx.strokeStyle = this.gridColor;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -100,10 +112,62 @@ class Visualizer {
     ctx.lineTo(w, h / 2);
     ctx.stroke();
 
+    // Compute audio level from the waveform data
+    let rms = 0;
+    if (data) {
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+      }
+      rms = Math.sqrt(sum / data.length);
+    }
+
+    // Smooth the audio level
+    if (rms > this._audioLevel) {
+      this._audioLevel = rms;
+    } else {
+      this._audioLevel *= this._audioLevelDecay;
+    }
+
+    // Determine if signal is below squelch threshold
+    // Map squelch (0-100) to amplitude threshold (0-0.5)
+    const squelchThreshold = (this.squelchLevel / 100) * 0.5;
+    this.isSquelched = this.squelchLevel > 0 && this._audioLevel < squelchThreshold;
+
+    // Draw squelch threshold lines if squelch is active
+    if (this.squelchLevel > 0) {
+      const sqY = squelchThreshold * h; // Distance from center
+      ctx.strokeStyle = this.squelchLineColor;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+
+      // Upper threshold line
+      ctx.beginPath();
+      ctx.moveTo(0, h / 2 - sqY);
+      ctx.lineTo(w, h / 2 - sqY);
+      ctx.stroke();
+
+      // Lower threshold line
+      ctx.beginPath();
+      ctx.moveTo(0, h / 2 + sqY);
+      ctx.lineTo(w, h / 2 + sqY);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+
+      // Label
+      ctx.fillStyle = this.squelchLineColor;
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('SQ', 2, h / 2 - sqY - 2);
+    }
+
     if (!data) return;
 
-    // Waveform
-    ctx.strokeStyle = this.waveColor;
+    // Waveform - use dimmed color when squelched
+    const color = this.isSquelched ? this.waveColorSquelched : this.waveColor;
+    ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
 
@@ -124,16 +188,26 @@ class Visualizer {
 
     ctx.stroke();
 
-    // Glow effect
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
-    ctx.lineWidth = 4;
-    ctx.stroke();
+    // Glow effect (only when not squelched)
+    if (!this.isSquelched) {
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+
+    // Audio level meter (thin bar on the right edge)
+    const meterWidth = 3;
+    const meterHeight = this._audioLevel * h;
+    const meterColor = this.isSquelched ? '#475569' : '#22c55e';
+    ctx.fillStyle = meterColor;
+    ctx.fillRect(w - meterWidth, h / 2 - meterHeight / 2, meterWidth, meterHeight);
   }
 
   _drawFFT(data) {
     const ctx = this.fftCtx;
-    const w = this.fftCanvas.width;
-    const h = this.fftCanvas.height;
+    const rect = this.fftCanvas.getBoundingClientRect();
+    const w = rect.width;
+    const h = rect.height;
 
     // Background
     ctx.fillStyle = this.bgColor;
@@ -164,14 +238,19 @@ class Visualizer {
 
       // Draw bar with gradient
       const gradient = ctx.createLinearGradient(0, h, 0, h - barHeight);
-      gradient.addColorStop(0, 'rgba(56, 189, 248, 0.6)');
-      gradient.addColorStop(1, 'rgba(14, 165, 233, 0.9)');
+      if (this.isSquelched) {
+        gradient.addColorStop(0, 'rgba(71, 85, 105, 0.5)');
+        gradient.addColorStop(1, 'rgba(71, 85, 105, 0.7)');
+      } else {
+        gradient.addColorStop(0, 'rgba(56, 189, 248, 0.6)');
+        gradient.addColorStop(1, 'rgba(14, 165, 233, 0.9)');
+      }
       ctx.fillStyle = gradient;
       ctx.fillRect(i * barWidth, h - barHeight, barWidth - 1, barHeight);
 
       // Draw peak line
       const peakY = h - this.fftPeaks[i] * h;
-      ctx.fillStyle = '#f1f5f9';
+      ctx.fillStyle = this.isSquelched ? '#475569' : '#f1f5f9';
       ctx.fillRect(i * barWidth, peakY, barWidth - 1, 1);
     }
   }
@@ -183,7 +262,6 @@ class Visualizer {
     canvas.height = rect.height * dpr;
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
-    // Reset canvas dimensions for CSS
     canvas.style.width = rect.width + 'px';
     canvas.style.height = rect.height + 'px';
   }
@@ -211,7 +289,6 @@ class SpectrumChart {
     const h = rect.height;
     const ctx = this.ctx;
 
-    // Background
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, w, h);
 
@@ -223,7 +300,6 @@ class SpectrumChart {
       return;
     }
 
-    // Find ranges
     const freqs = data.map(d => d.freq);
     const powers = data.map(d => d.power);
     const minFreq = Math.min(...freqs);
@@ -235,11 +311,9 @@ class SpectrumChart {
     const plotW = w - margin.left - margin.right;
     const plotH = h - margin.top - margin.bottom;
 
-    // Grid
     ctx.strokeStyle = '#1e293b';
     ctx.lineWidth = 1;
 
-    // Y axis grid & labels
     ctx.fillStyle = '#64748b';
     ctx.font = '10px monospace';
     ctx.textAlign = 'right';
@@ -254,7 +328,6 @@ class SpectrumChart {
       ctx.fillText(val.toFixed(0) + ' dB', margin.left - 5, y + 3);
     }
 
-    // X axis labels
     ctx.textAlign = 'center';
     const xSteps = Math.min(10, data.length);
     for (let i = 0; i <= xSteps; i++) {
@@ -263,7 +336,6 @@ class SpectrumChart {
       ctx.fillText((freq / 1e6).toFixed(1), x, h - 5);
     }
 
-    // Plot line
     ctx.beginPath();
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 1.5;
@@ -279,7 +351,6 @@ class SpectrumChart {
     }
     ctx.stroke();
 
-    // Fill under the curve
     const lastX = margin.left + ((data[data.length - 1].freq - minFreq) / freqRange) * plotW;
     ctx.lineTo(lastX, margin.top + plotH);
     ctx.lineTo(margin.left, margin.top + plotH);
@@ -287,7 +358,6 @@ class SpectrumChart {
     ctx.fillStyle = 'rgba(56, 189, 248, 0.1)';
     ctx.fill();
 
-    // Axis labels
     ctx.fillStyle = '#94a3b8';
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';

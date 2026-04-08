@@ -18,8 +18,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
-COPY data/ /app/data/
 
+# Copy default presets; entrypoint copies to volume if empty
+COPY data/ /app/data-defaults/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+VOLUME /app/data
 EXPOSE 8080
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python", "backend/app.py"]
