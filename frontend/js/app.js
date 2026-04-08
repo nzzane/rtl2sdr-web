@@ -144,13 +144,24 @@
     }
   }
 
-  /** Check if OpenWebRX+ is available (behind nginx proxy at /sdr/) */
-  async function detectOpenWebRX() {
+  /** Check if OpenWebRX+ is available.
+   * Uses the backend config (OPENWEBRX_ENABLED env var) as primary check,
+   * then verifies /sdr/ is actually reachable.
+   */
+  async function detectOpenWebRX(statusResponse) {
+    // Primary: backend tells us if OpenWebRX+ mode is configured
+    if (!statusResponse || !statusResponse.openwebrx_enabled) {
+      return false;
+    }
+    // Secondary: verify the proxy is actually working
     try {
-      const res = await fetch('/sdr/', { method: 'HEAD', signal: AbortSignal.timeout(3000) });
+      const res = await fetch('/sdr/', { method: 'HEAD', signal: AbortSignal.timeout(5000) });
       return res.ok;
     } catch (e) {
-      return false;
+      console.warn('[App] OpenWebRX+ configured but /sdr/ not reachable yet');
+      // Still return true - the env var says it should be there,
+      // the iframe will retry on its own when OpenWebRX+ finishes starting
+      return true;
     }
   }
 
@@ -661,8 +672,9 @@
       }
     });
 
-    // Play/Pause
+    // Play/Pause (only for standalone mode)
     $('#btn-play-pause').addEventListener('click', () => {
+      if (openwebrxEnabled) return; // Audio handled by OpenWebRX+
       if (isPlaying) {
         stopAll();
       } else {
@@ -679,8 +691,9 @@
       audio.setVolume(parseInt(e.target.value) / 100);
     });
 
-    // Keyboard shortcut - Space to toggle play
+    // Keyboard shortcut - Space to toggle play (standalone mode only)
     document.addEventListener('keydown', (e) => {
+      if (openwebrxEnabled) return;
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (e.code === 'Space') {
         e.preventDefault();
@@ -747,10 +760,13 @@
     await loadPresets();
     connectStatusWs();
 
-    // Detect OpenWebRX+ mode (available via nginx reverse proxy at /sdr/)
-    openwebrxEnabled = await detectOpenWebRX();
+    // Get backend status (includes OpenWebRX+ config)
+    const status = await api('GET', 'status');
+
+    // Detect OpenWebRX+ mode
+    openwebrxEnabled = await detectOpenWebRX(status);
     if (openwebrxEnabled) {
-      console.log('[App] OpenWebRX+ detected at /sdr/ - integrated mode enabled');
+      console.log('[App] OpenWebRX+ mode enabled - SDR handled by OpenWebRX+');
       $('#tab-sdr').style.display = '';
       $('#sdr-state-badge').textContent = 'OPENWEBRX+';
       $('#sdr-state-badge').className = 'sdr-state-badge receiving';
@@ -764,7 +780,6 @@
       }
     } else {
       // Standalone mode: check tool availability
-      const status = await api('GET', 'status');
       if (status.tools) {
         const missing = Object.entries(status.tools)
           .filter(([, ok]) => !ok)

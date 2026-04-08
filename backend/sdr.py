@@ -29,6 +29,7 @@ class SDRStream:
         self.running = False
         self._freq = None
         self._modulation = "fm"
+        self._squelch = 0
         self._gain = "auto"
         self._bandwidth = None
         self._ppm = 0
@@ -43,6 +44,10 @@ class SDRStream:
     @property
     def current_freq(self):
         return self._freq
+
+    @property
+    def current_squelch(self):
+        return self._squelch
 
     @property
     def state(self):
@@ -61,21 +66,26 @@ class SDRStream:
             "error": self._last_error,
         }
 
-    async def start(self, freq_hz, modulation="fm", gain="auto",
+    async def start(self, freq_hz, modulation="fm", squelch=0, gain="auto",
                     bandwidth=None, ppm=0, device_index=0):
-        """Start receiving on a frequency. Squelch is handled client-side."""
+        """Start receiving on a frequency.
+
+        squelch: server-side squelch level (used by scanner). For manual tuning
+        the UI applies client-side squelch instead (instant, no restart).
+        """
         await self.stop()
 
         self._last_error = None
         self._state = "starting"
         self._freq = freq_hz
         self._modulation = modulation
+        self._squelch = squelch
         self._gain = gain
         self._bandwidth = bandwidth
         self._ppm = ppm
         self._device_index = device_index
 
-        # Build rtl_fm command (no squelch - handled client-side for instant response)
+        # Build rtl_fm command
         cmd = [RTL_FM_BIN]
         cmd += ["-d", str(device_index)]
         cmd += ["-f", str(freq_hz)]
@@ -85,6 +95,9 @@ class SDRStream:
 
         if gain != "auto":
             cmd += ["-g", str(gain)]
+
+        if squelch > 0:
+            cmd += ["-l", str(squelch)]
 
         if bandwidth and modulation not in ("wbfm",):
             cmd += ["-W", str(bandwidth)]
@@ -97,8 +110,10 @@ class SDRStream:
             "-e", "signed", "-b", "16", "-c", "1", "-"
         ]
 
-        # Redirect rtl_fm stderr to a fd we can read, sox stderr to /dev/null
-        full_cmd = " ".join(cmd) + " 2>&1 | " + " ".join(sox_cmd) + " 2>/dev/null"
+        # Pipe rtl_fm stdout (audio) to sox. Discard stderr from both.
+        # IMPORTANT: Do NOT use 2>&1 here - that mixes rtl_fm's text status
+        # messages into the audio pipe, corrupting sox input and killing the stream.
+        full_cmd = " ".join(cmd) + " 2>/dev/null | " + " ".join(sox_cmd) + " 2>/dev/null"
 
         logger.info("Starting SDR: %s", full_cmd)
 
@@ -183,6 +198,21 @@ class SDRStream:
             self.running = False
             return None
 
+    async def audio_has_signal(self, threshold=500, chunk_size=4096):
+        """Check if the audio stream has signal above noise floor.
+
+        Reads a chunk and computes RMS of 16-bit samples.
+        threshold: RMS level (0-32768) above which we consider signal present.
+        Returns True if signal detected, False otherwise.
+        """
+        data = await self.read_audio(chunk_size)
+        if not data or len(data) < 4:
+            return False
+        import struct
+        samples = struct.unpack(f"<{len(data)//2}h", data)
+        rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
+        return rms > threshold
+
     async def stop(self):
         """Stop the current SDR stream."""
         if self.process:
@@ -257,7 +287,14 @@ class SDRScanner:
             self._scan_task = None
 
     async def _scan_loop(self):
-        """Main scan loop."""
+        """Main scan loop - holds on channels with signal like a real radio scanner.
+
+        Behaviour:
+        1. Tune to frequency, wait briefly for rtl_fm to settle
+        2. Sample audio to check if there's a signal (RMS above threshold)
+        3. If signal: stay on channel, keep checking every second until signal drops
+        4. If no signal: move to next frequency after dwell_time
+        """
         while self.scanning and self.frequencies:
             freq = self.frequencies[self.current_index]
             await self.sdr.start(
@@ -269,7 +306,34 @@ class SDRScanner:
             if self.on_frequency_change:
                 await self.on_frequency_change(freq, self.current_index)
 
-            await asyncio.sleep(self.dwell_time)
+            # Wait for rtl_fm to settle and start producing audio
+            await asyncio.sleep(0.5)
+
+            # Check for signal
+            has_signal = False
+            if self.sdr.is_active:
+                has_signal = await self.sdr.audio_has_signal(threshold=400)
+
+            if has_signal:
+                # Signal detected - hold on this channel
+                logger.info("Scanner: signal on %.6f MHz - holding", freq / 1e6)
+                hold_start = asyncio.get_event_loop().time()
+                while self.scanning and self.sdr.is_active:
+                    await asyncio.sleep(1.0)
+                    still_active = await self.sdr.audio_has_signal(threshold=400)
+                    if not still_active:
+                        # Signal dropped - wait a short grace period
+                        await asyncio.sleep(1.0)
+                        still_active = await self.sdr.audio_has_signal(threshold=400)
+                        if not still_active:
+                            logger.info("Scanner: signal lost on %.6f MHz - resuming scan", freq / 1e6)
+                            break
+            else:
+                # No signal - dwell briefly then move on
+                await asyncio.sleep(self.dwell_time)
+
+            if not self.scanning:
+                break
             self.current_index = (self.current_index + 1) % len(self.frequencies)
 
 
