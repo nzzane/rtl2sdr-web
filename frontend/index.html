@@ -36,7 +36,8 @@
         <span class="sdr-detail" id="sdr-detail"></span>
       </div>
       <div class="status-bar-right">
-        <label class="squelch-inline" title="Squelch level">
+        <span class="squelch-indicator" id="squelch-indicator"></span>
+        <label class="squelch-inline" title="Squelch level - also drag the line on the FFT display">
           <span class="squelch-label">SQ</span>
           <input type="range" id="global-squelch" min="0" max="100" value="0" class="range range-inline">
           <span class="squelch-val" id="global-squelch-val">0</span>
@@ -169,6 +170,16 @@
             <div class="form-group">
               <label>Bin (kHz)</label>
               <input type="number" id="spectrum-bin" value="25" step="1" class="input input-sm">
+            </div>
+            <div class="form-group">
+              <label>Tune as</label>
+              <select id="spectrum-tune-mod" class="input input-sm">
+                <option value="wbfm">WBFM</option>
+                <option value="fm">NFM</option>
+                <option value="am">AM</option>
+                <option value="usb">USB</option>
+                <option value="lsb">LSB</option>
+              </select>
             </div>
           </div>
           <div class="btn-row">

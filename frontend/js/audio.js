@@ -1,31 +1,40 @@
 /**
- * Audio engine - handles WebSocket audio streaming and Web Audio API playback.
- * Supports background playback on mobile via silent audio element trick.
+ * Audio engine - ring buffer playback with client-side squelch.
+ *
+ * Uses ScriptProcessorNode with a circular buffer for gapless audio.
+ * Squelch is applied client-side by measuring RMS power and gating output.
  */
 class AudioEngine {
   constructor() {
     this.audioCtx = null;
-    this.gainNode = null;
+    this.scriptNode = null;
     this.analyserNode = null;
     this.ws = null;
     this.playing = false;
     this.volume = 0.8;
     this.sampleRate = 48000;
-    this.bufferQueue = [];
-    this.isProcessing = false;
-    this.nextStartTime = 0;
 
-    // Silent audio element to keep mobile audio session alive
+    // Ring buffer (2 seconds)
+    this._bufferSize = 48000 * 2;
+    this._ringBuffer = null;
+    this._writePos = 0;
+    this._readPos = 0;
+    this._buffered = 0;
+
+    // Client-side squelch
+    this.squelchLevel = 0;   // 0-100, 0 = off
+    this.isSquelched = false;
+    this.audioRMS = 0;       // Current RMS power (0-1)
+    this._rmsDecay = 0.92;
+
+    // Silent audio element for mobile background playback
     this._silentAudio = null;
 
     // Callbacks
     this.onStatusChange = null;
+    this.onSquelchChange = null; // (isSquelched, rms, threshold)
   }
 
-  /**
-   * Initialize the Web Audio API context.
-   * Must be called from a user gesture on mobile.
-   */
   init() {
     if (this.audioCtx) return;
 
@@ -33,22 +42,26 @@ class AudioEngine {
       sampleRate: this.sampleRate,
     });
 
-    this.gainNode = this.audioCtx.createGain();
-    this.gainNode.gain.value = this.volume;
+    this._ringBuffer = new Float32Array(this._bufferSize);
+    this._writePos = 0;
+    this._readPos = 0;
+    this._buffered = 0;
+
+    // ScriptProcessor pulls from the ring buffer for gapless playback
+    // Buffer size 4096 = ~85ms per callback at 48kHz
+    this.scriptNode = this.audioCtx.createScriptProcessor(4096, 0, 1);
 
     this.analyserNode = this.audioCtx.createAnalyser();
     this.analyserNode.fftSize = 2048;
     this.analyserNode.smoothingTimeConstant = 0.8;
 
-    this.gainNode.connect(this.analyserNode);
+    this.scriptNode.onaudioprocess = (e) => this._processAudio(e);
+    this.scriptNode.connect(this.analyserNode);
     this.analyserNode.connect(this.audioCtx.destination);
 
     this._setupBackgroundAudio();
   }
 
-  /**
-   * Connect to the WebSocket audio stream.
-   */
   connect() {
     if (this.ws && this.ws.readyState <= 1) return;
 
@@ -70,19 +83,14 @@ class AudioEngine {
         try {
           const msg = JSON.parse(e.data);
           this._handleControlMessage(msg);
-        } catch (err) {
-          // ignore
-        }
+        } catch (err) { /* ignore */ }
       }
     };
 
     this.ws.onclose = () => {
       console.log('[Audio] WebSocket disconnected');
       this._notifyStatus();
-      // Reconnect after delay
-      setTimeout(() => {
-        if (this.playing) this.connect();
-      }, 2000);
+      setTimeout(() => { if (this.playing) this.connect(); }, 2000);
     };
 
     this.ws.onerror = (e) => {
@@ -90,36 +98,32 @@ class AudioEngine {
     };
   }
 
-  /**
-   * Send a control command via WebSocket.
-   */
   send(cmd) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(cmd));
     }
   }
 
-  /**
-   * Start audio playback.
-   */
   play() {
     this.init();
     if (this.audioCtx.state === 'suspended') {
       this.audioCtx.resume();
     }
     this.playing = true;
-    this.nextStartTime = 0;
+    // Flush the ring buffer on play to avoid stale data
+    this._writePos = 0;
+    this._readPos = 0;
+    this._buffered = 0;
     this.connect();
     this._startBackgroundAudio();
     this._notifyStatus();
   }
 
-  /**
-   * Stop audio playback.
-   */
   stop() {
     this.playing = false;
-    this.bufferQueue = [];
+    this._writePos = 0;
+    this._readPos = 0;
+    this._buffered = 0;
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -128,26 +132,18 @@ class AudioEngine {
     this._notifyStatus();
   }
 
-  /**
-   * Set volume (0 to 1).
-   */
   setVolume(val) {
     this.volume = val;
-    if (this.gainNode) {
-      this.gainNode.gain.value = val;
-    }
   }
 
-  /**
-   * Get analyser node for visualization.
-   */
+  setSquelch(level) {
+    this.squelchLevel = level;
+  }
+
   getAnalyser() {
     return this.analyserNode;
   }
 
-  /**
-   * Get time domain data for waveform.
-   */
   getTimeDomainData() {
     if (!this.analyserNode) return null;
     const data = new Uint8Array(this.analyserNode.frequencyBinCount);
@@ -155,9 +151,6 @@ class AudioEngine {
     return data;
   }
 
-  /**
-   * Get frequency data for FFT display.
-   */
   getFrequencyData() {
     if (!this.analyserNode) return null;
     const data = new Uint8Array(this.analyserNode.frequencyBinCount);
@@ -165,100 +158,122 @@ class AudioEngine {
     return data;
   }
 
+  /** Get buffer fill level as 0-1 */
+  getBufferLevel() {
+    return this._buffered / this._bufferSize;
+  }
+
   // --- Internal ---
 
+  _processAudio(e) {
+    const output = e.outputBuffer.getChannelData(0);
+    const len = output.length;
+
+    // Calculate squelch threshold: map 0-100 to a power threshold
+    // At squelch=50, threshold ~= 0.02 RMS which is reasonable for noise floor
+    const sqThreshold = this.squelchLevel > 0
+      ? Math.pow(this.squelchLevel / 100, 2) * 0.1
+      : 0;
+
+    // Compute RMS of upcoming audio to decide squelch
+    let sumSq = 0;
+    let peekCount = Math.min(len, this._buffered);
+    let peekPos = this._readPos;
+    for (let i = 0; i < peekCount; i++) {
+      const s = this._ringBuffer[peekPos];
+      sumSq += s * s;
+      peekPos = (peekPos + 1) % this._bufferSize;
+    }
+    const instantRMS = peekCount > 0 ? Math.sqrt(sumSq / peekCount) : 0;
+
+    // Smooth the RMS
+    if (instantRMS > this.audioRMS) {
+      this.audioRMS = instantRMS;
+    } else {
+      this.audioRMS = this.audioRMS * this._rmsDecay + instantRMS * (1 - this._rmsDecay);
+    }
+
+    // Determine squelch state
+    const wasSquelched = this.isSquelched;
+    this.isSquelched = this.squelchLevel > 0 && this.audioRMS < sqThreshold;
+
+    if (wasSquelched !== this.isSquelched && this.onSquelchChange) {
+      this.onSquelchChange(this.isSquelched, this.audioRMS, sqThreshold);
+    }
+
+    // Fill output from ring buffer
+    for (let i = 0; i < len; i++) {
+      if (this._buffered > 0) {
+        let sample = this._ringBuffer[this._readPos];
+        this._readPos = (this._readPos + 1) % this._bufferSize;
+        this._buffered--;
+
+        // Apply squelch gate
+        if (this.isSquelched) {
+          sample = 0;
+        }
+
+        output[i] = sample * this.volume;
+      } else {
+        output[i] = 0; // Buffer underrun - silence
+      }
+    }
+  }
+
   _handleAudioData(arrayBuffer) {
-    if (!this.audioCtx || !this.playing) return;
+    if (!this._ringBuffer || !this.playing) return;
 
-    // Convert Int16 PCM to Float32
     const int16 = new Int16Array(arrayBuffer);
-    const float32 = new Float32Array(int16.length);
+
     for (let i = 0; i < int16.length; i++) {
-      float32[i] = int16[i] / 32768;
+      this._ringBuffer[this._writePos] = int16[i] / 32768;
+      this._writePos = (this._writePos + 1) % this._bufferSize;
+      this._buffered++;
+
+      // If buffer overflows, advance read position (drop oldest)
+      if (this._buffered >= this._bufferSize) {
+        this._readPos = (this._readPos + 1) % this._bufferSize;
+        this._buffered = this._bufferSize - 1;
+      }
     }
-
-    // Create audio buffer and schedule playback
-    const audioBuffer = this.audioCtx.createBuffer(1, float32.length, this.sampleRate);
-    audioBuffer.getChannelData(0).set(float32);
-
-    const source = this.audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.gainNode);
-
-    const currentTime = this.audioCtx.currentTime;
-    if (this.nextStartTime < currentTime) {
-      // We've fallen behind, reset timing
-      this.nextStartTime = currentTime + 0.02; // Small buffer
-    }
-
-    source.start(this.nextStartTime);
-    this.nextStartTime += audioBuffer.duration;
   }
 
   _handleControlMessage(msg) {
     console.log('[Audio] Control message:', msg);
-    if (msg.event === 'tuned' && this.onStatusChange) {
+    if (this.onStatusChange) {
       this.onStatusChange(msg);
     }
   }
 
   _setupBackgroundAudio() {
-    // Create a silent audio element to maintain the audio session
-    // on mobile browsers even when the screen is off
     if (this._silentAudio) return;
-
     this._silentAudio = document.createElement('audio');
     this._silentAudio.loop = true;
     this._silentAudio.setAttribute('playsinline', '');
-
-    // Generate a short silent WAV
-    const silence = this._generateSilentWav(1); // 1 second
+    const silence = this._generateSilentWav(1);
     this._silentAudio.src = URL.createObjectURL(
       new Blob([silence], { type: 'audio/wav' })
     );
   }
 
   _startBackgroundAudio() {
-    if (this._silentAudio) {
-      this._silentAudio.play().catch(() => {});
-    }
+    if (this._silentAudio) this._silentAudio.play().catch(() => {});
   }
 
   _stopBackgroundAudio() {
-    if (this._silentAudio) {
-      this._silentAudio.pause();
-    }
+    if (this._silentAudio) this._silentAudio.pause();
   }
 
   _generateSilentWav(durationSec) {
-    const sampleRate = 8000;
-    const numSamples = sampleRate * durationSec;
-    const buffer = new ArrayBuffer(44 + numSamples * 2);
-    const view = new DataView(buffer);
-
-    // WAV header
-    const writeString = (offset, str) => {
-      for (let i = 0; i < str.length; i++) {
-        view.setUint8(offset + i, str.charCodeAt(i));
-      }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + numSamples * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true); // PCM
-    view.setUint16(22, 1, true); // mono
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, numSamples * 2, true);
-    // All zeros = silence
-
-    return buffer;
+    const sr = 8000, ns = sr * durationSec;
+    const buf = new ArrayBuffer(44 + ns * 2);
+    const v = new DataView(buf);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0,'RIFF'); v.setUint32(4,36+ns*2,true); w(8,'WAVE'); w(12,'fmt ');
+    v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+    v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true);
+    v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,ns*2,true);
+    return buf;
   }
 
   _notifyStatus() {
@@ -272,5 +287,4 @@ class AudioEngine {
   }
 }
 
-// Global instance
 window.audioEngine = new AudioEngine();

@@ -159,7 +159,6 @@ async def tune(params: dict):
     await sdr_stream.start(
         freq_hz=int(freq),
         modulation=params.get("modulation", "fm"),
-        squelch=int(params.get("squelch", 0)),
         gain=params.get("gain", "auto"),
         bandwidth=params.get("bandwidth"),
         ppm=int(params.get("ppm", 0)),
@@ -171,14 +170,6 @@ async def tune(params: dict):
         "streaming": sdr_stream.is_active,
         "sdr": sdr_stream.get_status(),
     }
-
-
-@app.post("/api/squelch")
-async def update_squelch(params: dict):
-    """Update squelch level on the active stream."""
-    squelch = int(params.get("squelch", 0))
-    await sdr_stream.update_squelch(squelch)
-    return {"ok": True, "squelch": squelch, "sdr": sdr_stream.get_status()}
 
 
 @app.post("/api/stop")
@@ -254,7 +245,6 @@ async def audio_websocket(ws: WebSocket):
                     await sdr_stream.start(
                         freq_hz=int(data["freq"]),
                         modulation=data.get("modulation", "fm"),
-                        squelch=int(data.get("squelch", 0)),
                         gain=data.get("gain", "auto"),
                         bandwidth=data.get("bandwidth"),
                         ppm=int(data.get("ppm", 0)),
@@ -278,13 +268,6 @@ async def audio_websocket(ws: WebSocket):
                         squelch=int(data.get("squelch", 10)),
                     )
                     await ws.send_json({"event": "scanning", "count": len(freqs)})
-
-                elif cmd == "squelch":
-                    await sdr_stream.update_squelch(int(data.get("squelch", 0)))
-                    await ws.send_json({
-                        "event": "squelch_updated",
-                        "squelch": sdr_stream.current_squelch,
-                    })
 
             except asyncio.TimeoutError:
                 pass
