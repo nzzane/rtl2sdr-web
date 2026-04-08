@@ -5,6 +5,10 @@ version: "3.8"
 #
 # Access the UI at http://localhost:8080
 # OpenWebRX+ SDR view is embedded at /sdr/ (same-origin via nginx)
+#
+# NOTE: The RTL-SDR USB device can only be used by one process at a time.
+# OpenWebRX+ holds the device for its waterfall/audio. The standalone audio
+# engine (scan, manual tune) will only work if OpenWebRX+ releases the device.
 
 services:
   # OpenWebRX+ - Full SDR backend: DSP, waterfall, spectrum, audio, squelch
@@ -28,6 +32,9 @@ services:
     restart: unless-stopped
     volumes:
       - rtlsdr-data:/app/data
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    privileged: true
     environment:
       - HOST=0.0.0.0
       - PORT=8080
