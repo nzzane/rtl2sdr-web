@@ -48,6 +48,7 @@
     <!-- Tab Navigation -->
     <nav class="tabs">
       <button class="tab active" data-tab="channels">Channels</button>
+      <button class="tab" data-tab="sdr" id="tab-sdr" style="display:none">Live SDR</button>
       <button class="tab" data-tab="scan">Scan</button>
       <button class="tab" data-tab="manual">Manual</button>
       <button class="tab" data-tab="spectrum">Spectrum</button>
@@ -66,6 +67,17 @@
           </select>
         </div>
         <div class="channel-list" id="channel-list"></div>
+      </section>
+
+      <!-- Live SDR Tab (OpenWebRX+ iframe - shown when integrated mode) -->
+      <section class="tab-panel" id="panel-sdr">
+        <div class="sdr-frame-bar">
+          <span class="sdr-frame-label">OpenWebRX+ SDR - click the waterfall to tune, or select a preset from Channels</span>
+          <button id="btn-sdr-fullscreen" class="btn btn-sm btn-secondary" title="Open SDR in new tab">Full Screen</button>
+        </div>
+        <div class="sdr-frame-container">
+          <iframe id="sdr-frame" src="/sdr/" allow="autoplay; microphone"></iframe>
+        </div>
       </section>
 
       <!-- Scan Tab -->

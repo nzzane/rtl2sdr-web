@@ -54,6 +54,9 @@ def save_presets(data):
 
 # --- REST API ---
 
+OPENWEBRX_ENABLED = os.environ.get("OPENWEBRX_ENABLED", "").lower() in ("true", "1", "yes")
+
+
 @app.get("/api/status")
 async def get_status():
     """Get current SDR status."""
@@ -65,6 +68,7 @@ async def get_status():
         "current_freq": sdr_stream.current_freq,
         "sample_rate": SAMPLE_RATE,
         "sdr": sdr_stream.get_status(),
+        "openwebrx_enabled": OPENWEBRX_ENABLED,
     }
 
 

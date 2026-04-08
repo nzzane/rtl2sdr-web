@@ -170,9 +170,10 @@ class AudioEngine {
     const len = output.length;
 
     // Calculate squelch threshold: map 0-100 to a power threshold
-    // At squelch=50, threshold ~= 0.02 RMS which is reasonable for noise floor
+    // Exponential curve: low squelch values cut noise, high values cut weak signals
+    // squelch=20 -> 0.02, squelch=50 -> 0.125, squelch=100 -> 0.5
     const sqThreshold = this.squelchLevel > 0
-      ? Math.pow(this.squelchLevel / 100, 2) * 0.1
+      ? Math.pow(this.squelchLevel / 100, 2) * 0.5
       : 0;
 
     // Compute RMS of upcoming audio to decide squelch
