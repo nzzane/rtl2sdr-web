@@ -145,24 +145,11 @@
   }
 
   /** Check if OpenWebRX+ is available.
-   * Uses the backend config (OPENWEBRX_ENABLED env var) as primary check,
-   * then verifies /sdr/ is actually reachable.
+   * Uses the backend config (OPENWEBRX_ENABLED env var) - this is deterministic
+   * and avoids timing/method issues with probing /sdr/ directly.
    */
   async function detectOpenWebRX(statusResponse) {
-    // Primary: backend tells us if OpenWebRX+ mode is configured
-    if (!statusResponse || !statusResponse.openwebrx_enabled) {
-      return false;
-    }
-    // Secondary: verify the proxy is actually working
-    try {
-      const res = await fetch('/sdr/', { method: 'HEAD', signal: AbortSignal.timeout(5000) });
-      return res.ok;
-    } catch (e) {
-      console.warn('[App] OpenWebRX+ configured but /sdr/ not reachable yet');
-      // Still return true - the env var says it should be there,
-      // the iframe will retry on its own when OpenWebRX+ finishes starting
-      return true;
-    }
+    return statusResponse && statusResponse.openwebrx_enabled === true;
   }
 
   // --- Tune Channel ---
